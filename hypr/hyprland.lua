@@ -159,8 +159,10 @@ hl.bind(mainMod .. " + mouse:273",    hl.dsp.window.resize(), { mouse = true })
 package.path = package.path .. ";./?.lua;./?/init.lua"
 local smw = require("plugins.split-monitor-workspaces")
 
+WORKSPACE_COUNT = 10 -- per monitor; also used by the power-off restore below
+
 smw.setup({
-    workspace_count = 10,
+    workspace_count = WORKSPACE_COUNT,
     keep_focused = true,
     enable_persistent_workspaces = true,
     monitor_priority = DEVICE.monitor_priority,
@@ -179,5 +181,119 @@ end
 local perdevice = os.getenv("HOME") .. "/.config/hypr/perdevice.lua"
 if io.open(perdevice, "r") then dofile(perdevice) end
 
+-- Surviving the monitors being switched off ---------------------------------
+-- These panels drop the DP/HDMI link when they power down (DPMS off does it
+-- too), so Hyprland sees a real hotplug disconnect: it parks the workspaces on
+-- whatever output is left -- a 1080p headless fallback once both are gone --
+-- and hands the ranges back out on reconnect. monitor_priority above keeps the
+-- ranges themselves pinned; this puts each monitor back on the workspace it
+-- was showing, so a night with the screens off leaves the session as it was.
+local saved_workspace = {}   -- monitor name -> workspace it was showing
+local saved_focus            -- monitor name that had focus
+local settled         = {}   -- last poll's reading, to spot a stable one
+local absent          = {}   -- monitor names currently disconnected
+local pause_gen, restore_gen = 0, 0
+local paused = false
 
+--- Position of a monitor in DEVICE.monitor_priority, by port name or by the
+--- "desc:" prefix of its description. nil when the monitor isn't pinned.
+local function priority_index(monitor)
+    for index, identifier in ipairs(DEVICE.monitor_priority) do
+        local description = identifier:match("^desc:%s*(.-)%s*$")
+        if description then
+            if monitor.description:sub(1, #description) == description then return index end
+        elseif identifier == monitor.name then
+            return index
+        end
+    end
+end
 
+--- Whether a workspace belongs to this monitor's own range. Anything else is a
+--- workspace mid-flight between monitors, not somewhere the user put it.
+local function owns_workspace(monitor, ws_name)
+    local index  = priority_index(monitor)
+    local number = tonumber(ws_name)
+    if not index or not number then return true end -- unpinned monitor, take its word
+    local first = (index - 1) * WORKSPACE_COUNT + 1
+    return number >= first and number < first + WORKSPACE_COUNT
+end
+
+--- Poll rather than follow workspace.active: a disconnect drags workspaces
+--- across monitors *before* monitor.removed fires, and that burst of events
+--- would otherwise overwrite the state we are trying to preserve. A reading
+--- only counts once it has survived two consecutive ticks, which the burst
+--- never does.
+hl.timer(function()
+    if paused then return end
+    for _, monitor in ipairs(hl.get_monitors()) do
+        local ws   = hl.get_active_workspace(monitor)
+        local name = ws and ws.name
+        if name and owns_workspace(monitor, name) then
+            if settled[monitor.name] == name then saved_workspace[monitor.name] = name end
+            settled[monitor.name] = name
+        end
+    end
+    local active = hl.get_active_monitor()
+    if active then
+        if settled.focus == active.name then saved_focus = active.name end
+        settled.focus = active.name
+    end
+end, { timeout = 1000, type = "repeat" })
+
+--- Stop polling for a moment: right after a disconnect every reading describes
+--- the collapsed layout, not the one worth remembering.
+local function pause_polling()
+    paused    = true
+    pause_gen = pause_gen + 1
+    local mine = pause_gen
+    hl.timer(function()
+        if mine == pause_gen then
+            paused  = false
+            settled = {} -- force a fresh pair of stable readings
+        end
+    end, { timeout = 4000, type = "oneshot" })
+end
+
+--- Put the monitors that just came back on the workspace they left off on.
+--- Only monitors that were actually absent are touched, so turning one screen
+--- off for the afternoon doesn't rewind the one you kept working on.
+local function restore()
+    ---@type string|nil
+    local focus_ws
+    for _, monitor in ipairs(hl.get_monitors()) do
+        if absent[monitor.name] then
+            local want = saved_workspace[monitor.name]
+            local ws   = want and hl.get_workspace(want)
+            -- Skip anything split-monitor-workspaces has since reassigned
+            -- elsewhere, rather than fighting it over the workspace.
+            if ws and ws.monitor and ws.monitor.name == monitor.name then
+                if monitor.name == saved_focus then
+                    focus_ws = want -- the focused monitor goes last, see below
+                else
+                    monitor:set_workspace({ workspace = want })
+                end
+            end
+            absent[monitor.name] = nil
+        end
+    end
+    -- set_workspace leaves focus alone, so the focused monitor is restored
+    -- last with focus() and the session ends up on the screen it started on.
+    if focus_ws then hl.dispatch(hl.dsp.focus({ workspace = focus_ws })) end
+end
+
+hl.on("monitor.removed", function(monitor)
+    absent[monitor.name] = true
+    pause_polling()
+end)
+
+hl.on("monitor.added", function(monitor)
+    if not absent[monitor.name] then return end
+    -- Wait for the dust to settle: the second monitor usually wakes a beat
+    -- after the first and split-monitor-workspaces remaps on every add, so
+    -- only the last timer scheduled gets to do the restore.
+    restore_gen = restore_gen + 1
+    local mine = restore_gen
+    hl.timer(function()
+        if mine == restore_gen then restore() end
+    end, { timeout = 2500, type = "oneshot" })
+end)
