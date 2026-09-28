@@ -147,6 +147,7 @@ hl.bind("F7",                         hl.dsp.exec_cmd("brightnessctl --device='p
 hl.bind("F8",                         hl.dsp.exec_cmd("brightnessctl --device='platform::kbd_backlight' set 1+"))
 
 hl.bind(mainMod .. " + N",            hl.dsp.global("quickshell:toggleDashboard"))
+hl.bind(mainMod .. " + SHIFT + N",    hl.dsp.global("quickshell:dashboardNextPreset"))
 hl.bind(mainMod .. " + W",            hl.dsp.global("quickshell:toggleWallpaperSelector"))
 hl.bind(mainMod .. " + SHIFT + W",    hl.dsp.exec_cmd("~/.config/scripts/wallpaper/wallpaper_shuffle.sh"))
 hl.bind(mainMod .. " + R",            hl.dsp.global("quickshell:toggleAppSelector"))

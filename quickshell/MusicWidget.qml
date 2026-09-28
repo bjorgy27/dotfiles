@@ -5,6 +5,8 @@ import "templates"
 import "themes"
 
 Item {
+  // Preset entry options (DashboardConfig.qml); unused unless a widget reads them.
+  property var options: ({})
   id: musicWidget
   
   property bool showWidget: bar.state === "normal" || bar.state === "dashboard"

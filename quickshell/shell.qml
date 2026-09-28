@@ -410,6 +410,16 @@ Scope {
   }
 
   GlobalShortcut {
+    name: "dashboardNextPreset"
+    onPressed: dashboardConfig.cycle()
+  }
+
+  // Dashboard presets (presets.json / presets.local.json), shared by every screen.
+  DashboardConfig {
+    id: dashboardConfig
+  }
+
+  GlobalShortcut {
     name: "toggleWallpaperSelector"
     onPressed: { root.toggleTarget = "wallpaper_selector"; root.toggleCounter++ }
   }
@@ -848,7 +858,7 @@ Scope {
               name: "dashboard"
               PropertyChanges {
                 target: bar;
-                dropdownWidth: metrics.isVertical ? (dashboardGrid.verticalContentHeight + dashboardGrid.topPad + dashboardGrid.bottomPad + bar.dropdownWidgetPadding * 2) : metrics.longPct(60);
+                dropdownWidth: metrics.isVertical ? (dashboardGrid.verticalContentHeight + dashboardGrid.topPad + dashboardGrid.bottomPad + bar.dropdownWidgetPadding * 2) : metrics.longPct(dashboardGrid.widthPercent);
                 dropdownHeight: metrics.isVertical ? metrics.crossPct(72) : (dashboardGrid.implicitHeight + (bar.dropdownWidgetPadding * 2) - bar.barThickness);
                 dropdownFilletRadius: metrics.radiusXL;
                 dropdownCornerRadius: metrics.radiusXL
@@ -1327,8 +1337,10 @@ Scope {
 
           RadarSettingsWidget {}
 
-          // Dashboard grid container. Horizontal: 4-column row, content-driven height.
-          // Vertical: fills the tall pocket; the Loader swaps in a 2-column reflow.
+          // Dashboard grid, built from the active preset (DashboardConfig.qml /
+          // presets.json). Horizontal: `columns` equal-width columns, content-driven
+          // height. Vertical: the preset's portrait block, or an automatic re-pack.
+          // Rows may be fractional; row r starts r pitches down.
           Item {
             id: dashboardGrid
             visible: bar.state === "dashboard"
@@ -1353,133 +1365,43 @@ Scope {
             property real topPad: metrics.s(5)
             property real bottomPad: metrics.spacingNormal
 
-            // Natural height of the portrait stack: Canvas(3.0) + 3 rows(1.6/4.2/1.2).
-            property real verticalContentHeight: widgetHeight * 10.0 + rowSpacing * 3
+            readonly property var layout: dashboardConfig.layoutFor(dashboardConfig.activePreset, metrics.isVertical)
+            readonly property int columns: Math.max(1, layout.columns)
+            readonly property real colWidth: (width - colSpacing * (columns - 1)) / columns
+            readonly property real widthPercent: dashboardConfig.activePreset?.widthPercent ?? 60
 
-            // Only used to size the horizontal pocket (content-driven).
-            // The radar column is the tallest: Radar(4.2) + weather row(1.2), plus 1 gap.
-            implicitHeight: topPad + (widgetHeight * 5.4) + rowSpacing + bottomPad
+            function rowY(row) { return row * (widgetHeight + rowSpacing) }
+            function rowH(span) { return span * widgetHeight + (span - 1) * rowSpacing }
+            function colX(col) { return col * (colWidth + colSpacing) }
+            function colW(span) { return span * colWidth + (span - 1) * colSpacing }
 
-            Loader {
+            property real verticalContentHeight: rowH(layout.rows)
+            implicitHeight: topPad + rowH(layout.rows) + bottomPad
+
+            Item {
               anchors.fill: parent
               anchors.topMargin: dashboardGrid.topPad
               anchors.bottomMargin: dashboardGrid.bottomPad
-              sourceComponent: metrics.isVertical ? verticalDash : horizontalDash
-            }
 
-            // ---- Landscape: 3-column layout (Services | Stats | Radar) ----
-            Component {
-              id: horizontalDash
-              ColumnLayout {
-                anchors.fill: parent
-                spacing: dashboardGrid.rowSpacing
+              Repeater {
+                model: dashboardGrid.layout.widgets
 
-                RowLayout {
-                Layout.fillWidth: true
-                spacing: dashboardGrid.colSpacing
+                // One Loader per preset entry; the registry maps `type` to a file.
+                // Options are read from the layout by index: model conversion
+                // would turn JS arrays into Qt sequences.
+                Loader {
+                  required property int index
+                  required property var modelData
+                  x: dashboardGrid.colX(modelData.col)
+                  y: dashboardGrid.rowY(modelData.row)
+                  width: dashboardGrid.colW(modelData.colSpan)
+                  height: dashboardGrid.rowH(modelData.rowSpan)
 
-                // Columns 1-2: Services (2-tall) + SystemStats/MiscStats side by side
-                ColumnLayout {
-                  Layout.fillWidth: true
-                  Layout.fillHeight: true
-                  Layout.preferredWidth: 2
-                  spacing: dashboardGrid.rowSpacing
-
-                  CanvasWidget {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: dashboardGrid.widgetHeight * 3.0
+                  Component.onCompleted: {
+                    let cell = dashboardGrid.layout.widgets[index]
+                    let entry = dashboardConfig.registry[cell.type]
+                    setSource(Qt.resolvedUrl(entry.file), Object.assign({ options: cell.options }, entry.props ?? {}))
                   }
-
-                  RowLayout {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: dashboardGrid.widgetHeight * 1.6
-                    spacing: dashboardGrid.colSpacing
-
-                    SystemStatsWidget {
-                      Layout.fillWidth: true
-                      Layout.fillHeight: true
-                    }
-
-                    MiscStatsWidget {
-                      Layout.fillWidth: true
-                      Layout.fillHeight: true
-                    }
-                  }
-                }
-
-                // Column 3: Radar map (fills the cell) + Weather/Network row underneath.
-                // preferredWidth 4 vs 2 above: the map takes ~2/3 of the dashboard.
-                ColumnLayout {
-                  Layout.fillWidth: true
-                  Layout.fillHeight: true
-                  Layout.preferredWidth: 4
-                  spacing: dashboardGrid.rowSpacing
-
-                  Item {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: dashboardGrid.widgetHeight * 4.2
-
-                    RadarWidget {
-                      anchors.fill: parent
-                    }
-                  }
-
-                  RowLayout {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: dashboardGrid.widgetHeight * 1.2
-                    spacing: dashboardGrid.colSpacing
-
-                    WeatherWidget {
-                      id: weatherWidget
-                      Layout.fillWidth: true
-                      Layout.fillHeight: true
-                    }
-
-                    NetworkStatsWidget {
-                      Layout.fillWidth: true
-                      Layout.fillHeight: true
-                    }
-                  }
-                }
-              }
-            }
-            }
-
-            // ---- Portrait: 2-column reflow (Services spans the top) ----
-            Component {
-              id: verticalDash
-              ColumnLayout {
-                anchors.fill: parent
-                spacing: dashboardGrid.rowSpacing
-
-                CanvasWidget {
-                  Layout.fillWidth: true
-                  Layout.preferredHeight: dashboardGrid.widgetHeight * 3.0
-                }
-
-                RowLayout {
-                  Layout.fillWidth: true
-                  Layout.preferredHeight: dashboardGrid.widgetHeight * 1.6
-                  spacing: dashboardGrid.colSpacing
-                  SystemStatsWidget { Layout.fillWidth: true; Layout.fillHeight: true }
-                  MiscStatsWidget { Layout.fillWidth: true; Layout.fillHeight: true }
-                }
-
-                Item {
-                  Layout.fillWidth: true
-                  Layout.preferredHeight: dashboardGrid.widgetHeight * 4.2
-
-                  RadarWidget {
-                    anchors.fill: parent
-                  }
-                }
-
-                RowLayout {
-                  Layout.fillWidth: true
-                  Layout.preferredHeight: dashboardGrid.widgetHeight * 1.2
-                  spacing: dashboardGrid.colSpacing
-                  WeatherWidget { Layout.fillWidth: true; Layout.fillHeight: true }
-                  NetworkStatsWidget { Layout.fillWidth: true; Layout.fillHeight: true }
                 }
               }
             }

@@ -6,6 +6,8 @@ import QtQuick.Layouts
 import "../themes"
 
 Item {
+  // Preset entry options (DashboardConfig.qml); unused unless a widget reads them.
+  property var options: ({})
   id: root
 
   visible: bar.state === "dashboard"
