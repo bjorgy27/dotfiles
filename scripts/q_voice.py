@@ -1066,8 +1066,37 @@ def hear(wav, forced=None):
     return text, speaker
 
 
+_mic_was_muted = None
+
+
+def mic_open():
+    """Beck keeps the mic muted (F4 is push-to-talk), so listening would hear silence: unmute the
+    default source for the turn and remember to put it back."""
+    global _mic_was_muted
+    try:
+        out = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SOURCE@"], capture_output=True, text=True, timeout=3).stdout
+        _mic_was_muted = "[MUTED]" in out
+        if _mic_was_muted:
+            subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "0"], timeout=3)
+            dbg("mic was muted: unmuted for the turn")
+    except Exception as e:  # noqa
+        dbg(f"mic unmute failed: {e}")
+
+
+def mic_restore():
+    global _mic_was_muted
+    if _mic_was_muted:
+        try:
+            subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "1"], timeout=3)
+        except Exception:
+            pass
+    _mic_was_muted = None
+
+
 def cmd_turn(args):
     pause_media()
+    if args.listen:
+        mic_open()
     try:
         if args.text:
             run_turn(args.text)
@@ -1115,6 +1144,7 @@ def cmd_turn(args):
                 break
             start_timeout, hint = CONVERSE_TIMEOUT_S, "go on… (or wait to end)"
     finally:
+        mic_restore()
         set_state("idle", _last_state.get("text", ""), _last_state.get("reply", ""), _last_speaker)
         resume_media()
 
