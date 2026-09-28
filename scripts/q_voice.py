@@ -606,7 +606,10 @@ def stream_llm(text, on_delta, stop, holder, speaker=None):
     # sound like a person, not a narrator, and with eleven_v3 direct the delivery with audio tags
     # Q speaks like Q: theatrical and dry, never a hesitant narrator
     NATURAL = ("this is spoken aloud in your own voice as Q: flowing, theatrical sentences with dry amusement, "
-               "no filler words like um or uh, no lists, and the answer first")
+               "no filler words like um or uh, no lists, and the answer first; the audio goes through an outside "
+               "voice service, so never say personal information aloud (passwords, keys, addresses, health, "
+               "relationships, anything private about Beck): offer to put it in the Q panel or Telegram instead; "
+               "project and work detail is fine")
     EXPRESS = ("your voice is rendered by a text to speech model that acts bracketed audio tags, so direct the delivery "
                "instead of just saying the words: put a tag right before the words it applies to, from `[chuckles]`, "
                "`[laughs]`, `[sighs]`, `[exhales]`, `[whispers]`, `[curious]`, `[excited]`, `[thoughtful]`, "
