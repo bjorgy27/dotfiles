@@ -109,6 +109,18 @@ hl.bind(mainMod .. " + code:60",      hl.dsp.exec_cmd("playerctl --player spotif
 hl.bind(mainMod .. " + code:59",      hl.dsp.exec_cmd("playerctl --player spotifyd,%any previous"))
 hl.bind(mainMod .. " + space",        hl.dsp.exec_cmd("playerctl --player spotifyd,%any play-pause"))
 
+-- Keyboard media and volume keys (standard XF86Audio* keysyms, so they work
+-- on any keyboard; locked = also on the lock screen). Cider shows up on MPRIS
+-- as chromium.instanceN. wpctl -l 1 caps the volume at 100%.
+hl.bind("XF86AudioPlay",        hl.dsp.exec_cmd("playerctl --player spotifyd,%any play-pause"), { locked = true })
+hl.bind("XF86AudioPause",       hl.dsp.exec_cmd("playerctl --player spotifyd,%any play-pause"), { locked = true })
+hl.bind("XF86AudioStop",        hl.dsp.exec_cmd("playerctl --player spotifyd,%any stop"),       { locked = true })
+hl.bind("XF86AudioNext",        hl.dsp.exec_cmd("playerctl --player spotifyd,%any next"),       { locked = true })
+hl.bind("XF86AudioPrev",        hl.dsp.exec_cmd("playerctl --player spotifyd,%any previous"),   { locked = true })
+hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 2%+"), { locked = true, repeating = true })
+hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%-"),      { locked = true, repeating = true })
+hl.bind("XF86AudioMute",        hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),     { locked = true })
+
 hl.bind("F12",                        hl.dsp.exec_cmd("~/.config/scripts/hyprland_capture_full.sh"))
 hl.bind(mainMod .. " + F12",          hl.dsp.exec_cmd("~/.config/scripts/hyprland_capture_partial.sh"))
 hl.bind("SHIFT + F12",                hl.dsp.exec_cmd("bash -c 'pgrep -x wf-recorder && bash /storage/git/dotfiles/scripts/hyprland_record_stop.sh || bash /storage/git/dotfiles/scripts/hyprland_record_full.sh'"))
