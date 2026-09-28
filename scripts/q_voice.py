@@ -595,7 +595,7 @@ def stream_llm(text, on_delta, stop, holder, speaker=None):
                "clause and never replaces words, since tags are stripped from the on-screen text; also use `...` for a "
                "hesitation and CAPITALS for one stressed word now and then; never put a tag inside a title")
     style = f"; {NATURAL}" + (f"; {EXPRESS}" if EL_V3 and tts_chain() and tts_chain()[0][0] == "elevenlabs" else "")
-    where = f"voice, {DEVICE}" + (f" ({DEVICE_NOTE})" if DEVICE_NOTE else "")
+    where = (f"voice, {DEVICE}" if VIA == "voice" else f"typed in the Q panel on {DEVICE}, not spoken") + (f" ({DEVICE_NOTE})" if DEVICE_NOTE else "")
     who = speaker_note(speaker)
     ctx = f"; {who}" if who else ""
     prefix = (f"[{where}; spoken reply: one to three short sentences unless I ask for detail, "
