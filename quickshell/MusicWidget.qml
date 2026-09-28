@@ -190,7 +190,7 @@ Item {
         if (musicWidget.hasMusic && musicWidget.musicText) {
           let icon = musicWidget.playbackStatus === "Paused" ? "▶ " : "⏸ "
           return musicWidget.isVertical ? icon.trim() : (icon + musicWidget.musicText)
-        } else if (musicWidget.launchName) {
+        } else if (musicWidget.isDashboard && musicWidget.launchName) {
           if (musicWidget.isVertical) return "🚀"
           let display = "🚀 " + musicWidget.countdownText
           let name = musicWidget.launchName

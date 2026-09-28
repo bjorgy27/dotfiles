@@ -62,18 +62,18 @@ DataWidget {
           let parts = lines[i].split('|')
           if (parts[0] === "power") {
             pwr = parts[1]
-          } else if (parts[0] === "device" && parts.length >= 6) {
+          } else if (parts[0] === "device" && parts.length >= 7) {
             let connected = parts[3] === "1"
             // Prefer first connected; otherwise fall back to first paired.
             if (connected && !pickConnected) {
               pickMac = parts[1]
               pickName = parts[2]
               pickConnected = true
-              pickBattery = parts[4]
+              pickBattery = parts[5]
             } else if (!pickConnected && pickName === "") {
               pickMac = parts[1]
               pickName = parts[2]
-              pickBattery = parts[4]
+              pickBattery = parts[5]
             }
           }
         }

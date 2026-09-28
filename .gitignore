@@ -1,7 +1,11 @@
-
 eww/eww.yuck
 scripts/wallpaper/wpsave.txt
 hypr/perdevice.lua
 hypr/plugins/
 wallpapers/goes_earth_live.png
 scripts/wallpaper/bins/spinning_globe/target
+*.bak
+# compatibility link for the old config/ layout (local only)
+/config
+# machine-local quickshell settings (home location)
+quickshell/local.js

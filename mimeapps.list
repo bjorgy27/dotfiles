@@ -1,0 +1,8 @@
+[Added Associations]
+text/plain=org.gnome.TextEditor.desktop;kitty.desktop;
+video/mp4=firefox.desktop;
+
+[Default Applications]
+text/plain=org.gnome.TextEditor.desktop
+x-scheme-handler/claude-cli=claude-code-url-handler.desktop
+video/mp4=firefox.desktop

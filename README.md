@@ -1,88 +1,44 @@
-# Dotfiles
+# dotfiles
 
-My personal dotfiles for Hyprland on Arch Linux.
+Personal Arch Linux setup: Hyprland + [quickshell](https://quickshell.outfoxxed.me/) (custom
+widget bar/shell), Catppuccin theming, kitty, neovim, Zed, and supporting scripts.
 
-## Overview
+## What's in here
 
-```
-dotfiles/
-├── hypr/           # Hyprland window manager config
-├── kitty/          # Kitty terminal config
-├── nvim/           # Neovim config (lazy.nvim)
-├── quickshell/     # Quickshell bar/widgets (QML)
-├── scripts/        # Utility scripts
-└── wallpapers/     # Wallpaper collection
-```
+- `packages/pacman.txt` - explicitly installed official-repo packages (`pacman -Qqe`)
+- `packages/aur.txt` - AUR packages (`pacman -Qqem`), installed via `yay`
+- Config folders (`hypr/`, `quickshell/`, `kitty/`, ...) sit at the repo root, matching
+  [gagehauptman/dotfiles](https://github.com/gagehauptman/dotfiles) (this repo is a fork);
+  `install.sh` symlinks each one into `~/.config/`
+  - `hypr/` - Hyprland, hyprlock, hypridle config
+  - `quickshell/` - the widget shell (bar, workspaces, wallpaper selector, weather/radar/
+    system-stats/Bluetooth/network/music widgets, Catppuccin theme variants)
+  - `scripts/` - screen capture/recording, wallpaper shuffling, and the poll scripts
+    quickshell widgets read from (weather, battery, network, Bluetooth, Tesla/Tessie,
+    Canvas assignments, radar, etc.)
+  - `kitty/`, `nvim/`, `zed/`, `xfce4/` (Thunar settings), plus `mimeapps.list` and
+    `QtProject.conf`
+  - `wallpapers/`, `autostart/`
+- `claude/` - Claude Code global `settings.json` and this machine's persistent memory
+  (`~/.claude/projects/-home-bjorgy/memory`)
+- `install.sh` - bootstraps a fresh Arch install: installs packages (+ yay if missing),
+  symlinks each config folder into `~/.config`, clones the `split-monitor-workspaces`
+  Lua plugin into `~/.config/hypr/plugins/` (it's `require()`'d directly from
+  `hyprland.lua`, not loaded via `hyprpm`), and enables sddm/wireplumber/pipewire.
 
-## Dependencies
+## Bringing up a new machine
 
-### Core
-
-| [hyprland](https://hyprland.org/) | Tiling Wayland compositor |
-| [quickshell](https://quickshell.outfoxxed.me/) | Qt6/QML shell toolkit |
-| [kitty](https://sw.kovidgoyal.net/kitty/) | GPU-accelerated terminal |
-| [awww](https://github.com/LGFae/awww) | Wallpaper daemon |
-| [hyprlock](https://github.com/hyprwm/hyprlock) | Lock screen |
-
-### Utilities
-
-| Package | Description |
-|---------|-------------|
-| [grim](https://sr.ht/~emersion/grim/) | Screenshot tool |
-| [slurp](https://github.com/emersion/slurp) | Region selection |
-| [wl-clipboard](https://github.com/bugaevc/wl-clipboard) | Clipboard utilities |
-| [playerctl](https://github.com/altdesktop/playerctl) | Media player control |
-| [brightnessctl](https://github.com/Hummer12007/brightnessctl) | Brightness control |
-| [pipewire](https://pipewire.org/) | Audio server |
-| [neovim](https://neovim.io/) | Text editor |
-
-## Installation
-
-```bash
-# Clone the repo
-git clone https://github.com/gagehauptman/dotfiles.git ~/dotfiles
-
-# Symlink configs
-ln -sf ~/dotfiles/hypr ~/.config/hypr
-ln -sf ~/dotfiles/kitty ~/.config/kitty
-ln -sf ~/dotfiles/zed ~/.config/zed
-ln -sf ~/dotfiles/quickshell ~/.config/quickshell
-ln -sf ~/dotfiles/nvim ~/.config/nvim
-ln -sf ~/dotfiles/scripts ~/.config/scripts
-ln -sf ~/dotfiles/wallpapers ~/.config/wallpapers
-
+```sh
+git clone <this-repo-url> ~/dotfiles
+cd ~/dotfiles
+./install.sh
 ```
 
-### Hyprland Plugins
+Then see `SECRETS.md` for the couple of manual, non-synced steps (API keys, Claude login).
 
-**[split-monitor-workspaces](https://github.com/zjeffer/split-monitor-workspaces)** - Gives each monitor its own independent workspace namespace (1-10 per monitor instead of shared global workspaces). Essential for multi-monitor setups. Requires Hyprland >= 0.55.0 with the Lua config.
+## Deliberately NOT tracked
 
-It's a Lua package that `hyprland.lua` requires from `hypr/plugins/`, so clone it there (through the `~/.config/hypr` symlink):
-
-```bash
-mkdir -p ~/.config/hypr/plugins
-cd ~/.config/hypr/plugins
-git clone https://github.com/zjeffer/split-monitor-workspaces
-
-# On a Hyprland release build, check out the matching release branch
-# (stay on main if you're running hyprland-git):
-cd split-monitor-workspaces
-git fetch -Ppft && git checkout release/0.55.x
-```
-
-> **Note:** Run `git pull` in the plugin repo after Hyprland updates, and check out the new `release/0.XX.x` branch whenever Hyprland has a new major release.
-
-## Arch Packages
-
-```bash
-# Install all dependencies
-pacman -S hyprland kitty awww hyprlock neovim \
-          grim slurp wl-clipboard playerctl brightnessctl \
-          pipewire pipewire-pulse jq socat wireplumber \
-          noto-fonts noto-fonts-cjk noto-fonts-emoji \
-          noto-fonts-extra ttf-nerd-fonts-symbols meson \
-          qt6ct papirus-icon-theme
-
-# Quickshell (AUR)
-yay -S quickshell-git
-```
+- `~/.config/canvas.key`, `~/.config/tessie.key` - API tokens, never committed (see `SECRETS.md`)
+- `~/.claude/.credentials.json`, session history, caches - machine-local, re-auth instead
+- The `hypr/plugins/split-monitor-workspaces` source tree - re-cloned by `install.sh`
+  instead of vendoring its nested git history (see `.gitignore`)

@@ -1,0 +1,3 @@
+quickshell-git
+yay
+yay-debug

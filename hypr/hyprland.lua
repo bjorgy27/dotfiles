@@ -1,5 +1,9 @@
 local mainMod = "SUPER"
 
+hl.monitor({ output = "HDMI-A-1", mode = "preferred", position = "0x0", scale = "1" })
+hl.monitor({ output = "DP-1", mode = "2560x1440@120", position = "2560x0", scale = "1" })
+hl.monitor({ output = "DP-2", mode = "2560x1440@180", position = "0x0", scale = "1" })
+
 hl.config({
     general = {
         gaps_in     = 5,
@@ -31,6 +35,10 @@ hl.config({
     render = {
         cm_enabled = false,
     },
+
+    cursor = {
+        default_monitor = "DP-1",
+    },
 })
 
 hl.config({
@@ -61,8 +69,10 @@ hl.animation({ leaf = "workspaces", enabled = true, speed = 4, bezier = "UWU1", 
 
 hl.on("hyprland.start", function()
     hl.exec_cmd("hyprpm reload -n")
+    hl.exec_cmd("hypridle")
     hl.exec_cmd("QT_QPA_PLATFORMTHEME=qt6ct quickshell")
     hl.exec_cmd("~/.config/scripts/init/wallpaper.sh")
+    hl.exec_cmd("~/.config/scripts/init/dark_mode.sh")
     hl.exec_cmd("nm-applet")
     hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP")
 end)
@@ -90,14 +100,19 @@ hl.bind(mainMod .. " + SHIFT + Q",    hl.dsp.exec_cmd("hyprctl reload"))
 hl.bind(mainMod .. " + SHIFT + E",    hl.dsp.exit())
 hl.bind(mainMod .. " + L",            hl.dsp.exec_cmd("hyprlock"))
 
+hl.bind(mainMod .. " + PERIOD",       hl.dsp.exec_cmd("hyprctl dispatch focusmonitor +1"))
+hl.bind(mainMod .. " + COMMA",        hl.dsp.exec_cmd("hyprctl dispatch focusmonitor -1"))
+hl.bind(mainMod .. " + SHIFT + PERIOD", hl.dsp.exec_cmd("hyprctl dispatch movewindow mon:+1"))
+hl.bind(mainMod .. " + SHIFT + COMMA",  hl.dsp.exec_cmd("hyprctl dispatch movewindow mon:-1"))
+
 hl.bind(mainMod .. " + code:60",      hl.dsp.exec_cmd("playerctl --player spotifyd,%any next"))
 hl.bind(mainMod .. " + code:59",      hl.dsp.exec_cmd("playerctl --player spotifyd,%any previous"))
 hl.bind(mainMod .. " + space",        hl.dsp.exec_cmd("playerctl --player spotifyd,%any play-pause"))
 
-hl.bind("Print",                      hl.dsp.exec_cmd("~/.config/scripts/hyprland_capture_full.sh"))
-hl.bind(mainMod .. " + Print",        hl.dsp.exec_cmd("~/.config/scripts/hyprland_capture_partial.sh"))
-hl.bind("SHIFT + Print",              hl.dsp.exec_cmd("bash -c 'pgrep -x wf-recorder && bash /storage/git/dotfiles/scripts/hyprland_record_stop.sh || bash /storage/git/dotfiles/scripts/hyprland_record_full.sh'"))
-hl.bind(mainMod .. " + SHIFT + Print",hl.dsp.exec_cmd("bash -c 'pgrep -x wf-recorder && bash /storage/git/dotfiles/scripts/hyprland_record_stop.sh || bash /storage/git/dotfiles/scripts/hyprland_record_region.sh'"))
+hl.bind("F12",                        hl.dsp.exec_cmd("~/.config/scripts/hyprland_capture_full.sh"))
+hl.bind(mainMod .. " + F12",          hl.dsp.exec_cmd("~/.config/scripts/hyprland_capture_partial.sh"))
+hl.bind("SHIFT + F12",                hl.dsp.exec_cmd("bash -c 'pgrep -x wf-recorder && bash /storage/git/dotfiles/scripts/hyprland_record_stop.sh || bash /storage/git/dotfiles/scripts/hyprland_record_full.sh'"))
+hl.bind(mainMod .. " + SHIFT + F12",  hl.dsp.exec_cmd("bash -c 'pgrep -x wf-recorder && bash /storage/git/dotfiles/scripts/hyprland_record_stop.sh || bash /storage/git/dotfiles/scripts/hyprland_record_region.sh'"))
 
 hl.bind(mainMod .. " + left",         hl.dsp.focus({ direction = "left"  }))
 hl.bind(mainMod .. " + right",        hl.dsp.focus({ direction = "right" }))
@@ -114,8 +129,14 @@ hl.bind("F2",                         hl.dsp.exec_cmd("pactl set-sink-volume @DE
 hl.bind("F3",                         hl.dsp.exec_cmd("pactl set-sink-volume @DEFAULT_SINK@ +5%"))
 hl.bind(mainMod .. " + F4",           hl.dsp.exec_cmd("pactl set-source-mute @DEFAULT_SOURCE@ toggle"))
 
+hl.bind("F5",                         hl.dsp.exec_cmd("brightnessctl set 5%-"))
+hl.bind("F6",                         hl.dsp.exec_cmd("brightnessctl set 5%+"))
+hl.bind("F7",                         hl.dsp.exec_cmd("brightnessctl --device='platform::kbd_backlight' set 1-"))
+hl.bind("F8",                         hl.dsp.exec_cmd("brightnessctl --device='platform::kbd_backlight' set 1+"))
+
 hl.bind(mainMod .. " + N",            hl.dsp.global("quickshell:toggleDashboard"))
 hl.bind(mainMod .. " + W",            hl.dsp.global("quickshell:toggleWallpaperSelector"))
+hl.bind(mainMod .. " + SHIFT + W",    hl.dsp.exec_cmd("~/.config/scripts/wallpaper/wallpaper_shuffle.sh"))
 hl.bind(mainMod .. " + R",            hl.dsp.global("quickshell:toggleAppSelector"))
 
 hl.bind(mainMod .. " + mouse:272",    hl.dsp.window.drag(),   { mouse = true })
@@ -128,6 +149,7 @@ smw.setup({
     workspace_count = 10,
     keep_focused = true,
     enable_persistent_workspaces = true,
+    monitor_priority = { "DP-1", "HDMI-A-1" },
 })
 
 for i = 1, smw.get_amount_of_workspaces() do
@@ -142,3 +164,6 @@ end
 
 local perdevice = os.getenv("HOME") .. "/.config/hypr/perdevice.lua"
 if io.open(perdevice, "r") then dofile(perdevice) end
+
+
+

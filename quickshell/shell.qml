@@ -1,4 +1,5 @@
 import QtQuick
+import "local.js" as Local
 import QtQuick.Layouts
 import QtQuick.Shapes
 import QtQuick.Effects
@@ -87,6 +88,279 @@ Scope {
     command: ["bash", root.home + "/.config/scripts/polls/cpupoll.sh"]
     interval: 2000
     onOutput: text => root.cpuLoad = text
+  }
+
+  // Network status (radio state + active connection), shared across monitors.
+  property bool netRadioEnabled: true
+  property string netType: "none"   // "wifi" | "ethernet" | "none"
+  property string netName: ""
+  property string netSignal: ""
+  property string netDevice: ""
+
+  function forceNetworkStatusRefresh() { networkStatusProc.running = true }
+
+  PollProcess {
+    id: networkStatusProc
+    command: ["bash", root.home + "/.config/scripts/polls/networkstatuspoll.sh"]
+    interval: 3000
+    onOutput: text => {
+      let parts = text.split('|')
+      if (parts.length === 5) {
+        root.netRadioEnabled = parts[0] === "enabled"
+        root.netType = parts[1]
+        root.netName = parts[2]
+        root.netSignal = parts[3]
+        root.netDevice = parts[4]
+      }
+    }
+  }
+
+  // Bluetooth status (power + connected device count/name), shared across monitors.
+  property string btPower: "unavailable"   // "on" | "off" | "unavailable"
+  property int btConnectedCount: 0
+  property string btConnectedName: ""
+
+  function forceBluetoothStatusRefresh() { bluetoothStatusProc.running = true }
+
+  PollProcess {
+    id: bluetoothStatusProc
+    command: ["bash", root.home + "/.config/scripts/polls/bluetoothstatuspoll.sh"]
+    interval: 5000
+    onOutput: text => {
+      let parts = text.split('|')
+      if (parts.length === 3) {
+        root.btPower = parts[0]
+        root.btConnectedCount = parseInt(parts[1]) || 0
+        root.btConnectedName = parts[2]
+      }
+    }
+  }
+
+  // === RADAR / MAP DASHBOARD WIDGET (shared across monitors) ===
+  // The map view (centre + zoom) and settings are shared app-wide and persisted
+  // to disk via radarstate.sh. Weather frames and aircraft are polled once here
+  // and rendered by every RadarWidget instance.
+
+  // Approximate current location, used for the map's "you are here" marker and
+  // as the default view centre. Lives in the gitignored local.js.
+  property real homeLat: Local.homeLat
+  property real homeLon: Local.homeLon
+
+  property real mapLat: homeLat
+  property real mapLon: homeLon
+  property real mapZoom: 6
+  // rainviewer | nws_bref | none
+  property string mapProduct: "rainviewer"
+  property bool mapPlanes: true
+  property bool mapAnimate: false
+
+  // True while any screen's bar is showing the dashboard — gates the aircraft
+  // poll so nothing is fetched while the map isn't visible.
+  property var dashScreens: ({})
+  property bool dashboardVisible: false
+  function setDashVisible(name, visible) {
+    let next = Object.assign({}, dashScreens)
+    if (visible) next[name] = true
+    else delete next[name]
+    dashScreens = next
+    dashboardVisible = Object.keys(next).length > 0
+  }
+
+  function setMapView(lat, lon, zoom) {
+    if (isNaN(lat) || isNaN(lon) || isNaN(zoom)) return
+    // Every screen republishes the shared view once its map settles on it;
+    // ignore those echoes so they don't restart the persist/aircraft timers.
+    if (Math.abs(lat - root.mapLat) < 1e-7 && Math.abs(lon - root.mapLon) < 1e-7
+        && Math.abs(zoom - root.mapZoom) < 1e-7) return
+    root.mapLat = lat
+    root.mapLon = lon
+    root.mapZoom = zoom
+    mapPersistTimer.restart()
+    aircraftViewTimer.restart()
+  }
+
+  function setMapSettings(product, planes, animate) {
+    root.mapProduct = product
+    root.mapPlanes = planes
+    root.mapAnimate = animate
+    mapPersistTimer.stop()
+    root.persistMapState()
+    if (planes) aircraftViewTimer.restart()
+  }
+
+  function persistMapState() {
+    mapStateSaveProc.command = ["bash", root.home + "/.config/scripts/polls/radarstate.sh",
+      root.mapLat.toFixed(5), root.mapLon.toFixed(5), root.mapZoom.toFixed(3),
+      root.mapProduct, root.mapPlanes ? "1" : "0", root.mapAnimate ? "1" : "0"]
+    mapStateSaveProc.running = true
+  }
+
+  // View changes persist after a short quiet period so a drag doesn't spawn a
+  // process per frame.
+  Timer {
+    id: mapPersistTimer
+    interval: 1500
+    onTriggered: root.persistMapState()
+  }
+
+  Process {
+    id: mapStateSaveProc
+    running: false
+  }
+
+  Process {
+    id: mapStateLoadProc
+    command: ["bash", root.home + "/.config/scripts/polls/radarstate.sh"]
+    running: true
+    stdout: StdioCollector {
+      onStreamFinished: {
+        let parts = this.text.trim().split('|')
+        if (parts.length !== 6) return
+        let lat = parseFloat(parts[0]), lon = parseFloat(parts[1]), zoom = parseFloat(parts[2])
+        if (!isNaN(lat) && !isNaN(lon) && !isNaN(zoom)) {
+          root.mapLat = lat
+          root.mapLon = lon
+          root.mapZoom = zoom
+        }
+        if (parts[3]) root.mapProduct = parts[3]
+        root.mapPlanes = parts[4] === "1"
+        root.mapAnimate = parts[5] === "1"
+      }
+    }
+  }
+
+  // RainViewer frame index (global radar composite). Each line is
+  // "<unix time>|past|nowcast|<tile url base>"; the layer builds tile URLs from it.
+  property var weatherFrames: []
+  property int weatherFramesNonce: 0
+  property string weatherError: ""
+
+  PollProcess {
+    id: weatherFramesProc
+    command: ["bash", root.home + "/.config/scripts/polls/weatherframes.sh"]
+    interval: 300000
+    onOutput: text => {
+      if (!text || text.startsWith("error|")) {
+        root.weatherError = text ? text.slice(text.indexOf('|') + 1) : "no data"
+        return
+      }
+      let frames = []
+      for (let line of text.split('\n')) {
+        let parts = line.trim().split('|')
+        if (parts.length !== 3) continue
+        let time = parseInt(parts[0])
+        if (isNaN(time) || !parts[2]) continue
+        frames.push({ time: time, kind: parts[1], url: parts[2] })
+      }
+      if (frames.length === 0) {
+        root.weatherError = "no frames"
+        return
+      }
+      root.weatherError = ""
+      root.weatherFrames = frames
+      root.weatherFramesNonce++
+    }
+  }
+
+  // NWS WMS layers have no frame index; bumping this makes their tiles refetch.
+  property int nwsNonce: 0
+  Timer {
+    interval: 300000
+    running: true
+    repeat: true
+    onTriggered: root.nwsNonce++
+  }
+
+  // Aircraft near the map centre (adsb.lol). Polled only while a dashboard is
+  // visible, planes are enabled and the map is zoomed in enough to draw them.
+  property var aircraft: []
+  property real aircraftFetchedAt: 0
+  property string aircraftError: ""
+  readonly property bool aircraftPollActive: root.dashboardVisible && root.mapPlanes && root.mapZoom >= 4
+
+  // Search radius: half the diagonal of an ~800 px view at the current zoom,
+  // in nautical miles (Web Mercator metres per pixel at the view centre).
+  function aircraftRadiusNm() {
+    let mpp = 156543.03392 * Math.cos(root.mapLat * Math.PI / 180) / Math.pow(2, root.mapZoom)
+    let halfDiagM = Math.sqrt(2) * 400 * mpp
+    return Math.max(25, Math.min(250, Math.round(halfDiagM / 1852)))
+  }
+
+  function pollAircraft() {
+    if (!root.aircraftPollActive || aircraftProc.running) return
+    aircraftProc.command = ["bash", root.home + "/.config/scripts/polls/aircraftpoll.sh",
+      root.mapLat.toFixed(4), root.mapLon.toFixed(4), String(root.aircraftRadiusNm())]
+    aircraftProc.running = true
+  }
+
+  onAircraftPollActiveChanged: if (aircraftPollActive) root.pollAircraft()
+
+  Process {
+    id: aircraftProc
+    running: false
+    stdout: StdioCollector {
+      onStreamFinished: {
+        let text = this.text.trim()
+        let data = null
+        try { data = JSON.parse(text) } catch (e) { data = null }
+        if (!data || data.error || !Array.isArray(data.ac)) {
+          root.aircraftError = data && data.error ? data.error : "no data"
+          return
+        }
+        root.aircraftError = ""
+        root.aircraft = data.ac
+        root.aircraftFetchedAt = Date.now()
+      }
+    }
+  }
+
+  Timer {
+    id: aircraftPollTimer
+    interval: 10000
+    running: root.aircraftPollActive
+    repeat: true
+    onTriggered: root.pollAircraft()
+  }
+
+  // Re-poll shortly after the view settles somewhere new.
+  Timer {
+    id: aircraftViewTimer
+    interval: 1000
+    onTriggered: root.pollAircraft()
+  }
+
+  // Selected aircraft + its route (adsbdb, via routepoll.sh).
+  property string selectedAircraftHex: ""
+  property var selectedRoute: null
+
+  function selectAircraft(hex, callsign) {
+    root.selectedAircraftHex = hex || ""
+    root.selectedRoute = null
+    routeProc.running = false
+    if (!hex) return
+    let cs = (callsign || "").trim()
+    if (!/^[A-Za-z0-9]{2,8}$/.test(cs)) {
+      root.selectedRoute = { error: "no callsign" }
+      return
+    }
+    routeProc.requestedHex = hex
+    routeProc.command = ["bash", root.home + "/.config/scripts/polls/routepoll.sh", cs.toUpperCase()]
+    routeProc.running = true
+  }
+
+  Process {
+    id: routeProc
+    property string requestedHex: ""
+    running: false
+    stdout: StdioCollector {
+      onStreamFinished: {
+        // Ignore a late answer for a plane that's no longer selected.
+        if (routeProc.requestedHex !== root.selectedAircraftHex) return
+        let data = null
+        try { data = JSON.parse(this.text.trim()) } catch (e) { data = null }
+        root.selectedRoute = data ? data : { error: "route lookup failed" }
+      }
+    }
   }
 
   // Brightness detection + polling
@@ -297,7 +571,7 @@ Scope {
       // they grab exclusively. The wallpaper selector is mouse-navigable, so it uses
       // OnDemand — an Exclusive grab is global and blocks clicks on other monitors.
       // Its arrow keys arrive via root's shared HyprlandFocusGrab instead.
-      WlrLayershell.keyboardFocus: (bar.state === "app_selector" || bar.state === "power_menu")
+      WlrLayershell.keyboardFocus: (bar.state === "app_selector" || bar.state === "power_menu" || bar.state === "network" || bar.state === "bluetooth" || bar.state === "radar_settings")
             ? WlrKeyboardFocus.Exclusive
             : (bar.state === "wallpaper_selector")
             ? WlrKeyboardFocus.OnDemand
@@ -305,7 +579,16 @@ Scope {
 
       readonly property bool selectorOpen: bar.state === "wallpaper_selector"
       onSelectorOpenChanged: root.setSelectorOpen(barWindow, selectorOpen)
-      Component.onDestruction: root.setSelectorOpen(barWindow, false)
+
+      // Tell root whether this screen is showing the dashboard (gates the
+      // aircraft poll for the radar map).
+      readonly property bool dashOpen: bar.state === "dashboard"
+      onDashOpenChanged: root.setDashVisible(modelData.name, dashOpen)
+      Component.onCompleted: root.setDashVisible(modelData.name, dashOpen)
+      Component.onDestruction: {
+        root.setSelectorOpen(barWindow, false)
+        root.setDashVisible(modelData.name, false)
+      }
 
       // Escape/Enter close every open selector, not just the local one.
       Connections {
@@ -558,6 +841,36 @@ Scope {
                 dropdownFilletRadius: metrics.radiusXL;
                 dropdownCornerRadius: metrics.radiusXL;
               }
+            },
+            State {
+              name: "network"
+              PropertyChanges {
+                target: bar;
+                dropdownWidth: metrics.isVertical ? metrics.longPct(70) : metrics.longPct(28);
+                dropdownHeight: metrics.isVertical ? metrics.crossPct(60) : metrics.crossPct(45);
+                dropdownFilletRadius: metrics.radiusXL;
+                dropdownCornerRadius: metrics.radiusXL;
+              }
+            },
+            State {
+              name: "bluetooth"
+              PropertyChanges {
+                target: bar;
+                dropdownWidth: metrics.isVertical ? metrics.longPct(70) : metrics.longPct(28);
+                dropdownHeight: metrics.isVertical ? metrics.crossPct(60) : metrics.crossPct(45);
+                dropdownFilletRadius: metrics.radiusXL;
+                dropdownCornerRadius: metrics.radiusXL;
+              }
+            },
+            State {
+              name: "radar_settings"
+              PropertyChanges {
+                target: bar;
+                dropdownWidth: metrics.isVertical ? metrics.longPct(65) : metrics.longPct(24);
+                dropdownHeight: metrics.isVertical ? metrics.crossPct(55) : metrics.crossPct(42);
+                dropdownFilletRadius: metrics.radiusXL;
+                dropdownCornerRadius: metrics.radiusXL;
+              }
             }
           ]
 
@@ -717,6 +1030,132 @@ Scope {
               color: Theme.colors.textMuted
             }
 
+            // Network indicator. Click toggles the Wi-Fi manager dropdown.
+            // (Plain Item wrapper: Grid positioners break if a child uses anchors,
+            // so the click MouseArea lives one level up, sized to the inner Grid.)
+            Item {
+              id: networkIndicator
+              implicitWidth: netGrid.implicitWidth
+              implicitHeight: netGrid.implicitHeight
+              width: implicitWidth
+              height: implicitHeight
+
+              readonly property color netColor: {
+                if (root.netType === "wifi" || root.netType === "ethernet") return Theme.colors.green
+                if (!root.netRadioEnabled) return Theme.colors.textMuted
+                return Theme.colors.red
+              }
+
+              Grid {
+                id: netGrid
+                columns: metrics.isVertical ? 1 : 99
+                rowSpacing: metrics.spacingTiny
+                columnSpacing: metrics.spacingTiny
+                horizontalItemAlignment: Grid.AlignHCenter
+                verticalItemAlignment: Grid.AlignVCenter
+
+                Text {
+                  text: {
+                    if (root.netType === "ethernet") return "󰈀"
+                    if (!root.netRadioEnabled) return "󰖪"
+                    if (root.netType === "wifi") {
+                      let sig = parseInt(root.netSignal)
+                      if (sig >= 80) return "󰤨"
+                      if (sig >= 55) return "󰤥"
+                      if (sig >= 30) return "󰤢"
+                      if (sig > 0) return "󰤟"
+                      return "󰤯"
+                    }
+                    return "󰤭"
+                  }
+                  color: networkIndicator.netColor
+                  font.pixelSize: metrics.fontNormal
+                  font.family: "monospace"
+                  font.bold: true
+                }
+                Text {
+                  text: root.netType === "none" ? "Off" : root.netName
+                  color: networkIndicator.netColor
+                  font.pixelSize: metrics.isVertical ? metrics.fontTiny : metrics.fontSmall
+                  font.bold: true
+                  elide: Text.ElideRight
+                  width: Math.min(implicitWidth, metrics.isVertical ? metrics.barThickness : metrics.s(90))
+                }
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: bar.state = (bar.state === "network") ? "normal" : "network"
+              }
+            }
+
+            Rectangle {
+              implicitWidth: metrics.isVertical ? bar.barThickness * 0.6 : bar.dividerThickness
+              implicitHeight: metrics.isVertical ? bar.dividerThickness : bar.barThickness * 0.6
+              Layout.alignment: Qt.AlignCenter
+              color: Theme.colors.textMuted
+            }
+
+            // Bluetooth indicator. Click toggles the Bluetooth manager dropdown.
+            Item {
+              id: bluetoothIndicator
+              implicitWidth: btGrid.implicitWidth
+              implicitHeight: btGrid.implicitHeight
+              width: implicitWidth
+              height: implicitHeight
+
+              readonly property color btColor: {
+                if (root.btPower === "unavailable") return Theme.colors.red
+                if (root.btPower !== "on") return Theme.colors.textMuted
+                if (root.btConnectedCount > 0) return Theme.colors.blue
+                return Theme.colors.textSecondary
+              }
+
+              Grid {
+                id: btGrid
+                columns: metrics.isVertical ? 1 : 99
+                rowSpacing: metrics.spacingTiny
+                columnSpacing: metrics.spacingTiny
+                horizontalItemAlignment: Grid.AlignHCenter
+                verticalItemAlignment: Grid.AlignVCenter
+
+                Text {
+                  text: (root.btPower === "on" && root.btConnectedCount > 0) ? "󰂱" : "󰂯"
+                  color: bluetoothIndicator.btColor
+                  font.pixelSize: metrics.fontNormal
+                  font.family: "monospace"
+                  font.bold: true
+                }
+                Text {
+                  text: {
+                    if (root.btPower === "unavailable") return "N/A"
+                    if (root.btPower !== "on") return "Off"
+                    if (root.btConnectedCount > 0) return root.btConnectedName
+                    return "On"
+                  }
+                  color: bluetoothIndicator.btColor
+                  font.pixelSize: metrics.isVertical ? metrics.fontTiny : metrics.fontSmall
+                  font.bold: true
+                  elide: Text.ElideRight
+                  width: Math.min(implicitWidth, metrics.isVertical ? metrics.barThickness : metrics.s(90))
+                }
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: bar.state = (bar.state === "bluetooth") ? "normal" : "bluetooth"
+              }
+            }
+
+            Rectangle {
+              implicitWidth: metrics.isVertical ? bar.barThickness * 0.6 : bar.dividerThickness
+              implicitHeight: metrics.isVertical ? bar.dividerThickness : bar.barThickness * 0.6
+              Layout.alignment: Qt.AlignCenter
+              color: Theme.colors.textMuted
+            }
+
             Grid {
               columns: metrics.isVertical ? 1 : 99
               rowSpacing: metrics.spacingTiny
@@ -839,7 +1278,13 @@ Scope {
           }
 
           PowerMenuWidget {}
-          
+
+          NetworkManagerWidget {}
+
+          BluetoothWidget {}
+
+          RadarSettingsWidget {}
+
           // Dashboard grid container. Horizontal: 4-column row, content-driven height.
           // Vertical: fills the tall pocket; the Loader swaps in a 2-column reflow.
           Item {
@@ -866,11 +1311,12 @@ Scope {
             property real topPad: metrics.s(5)
             property real bottomPad: metrics.spacingNormal
 
-            // Natural height of the portrait stack: Services(1.5) + 3 rows(1.6/1.3/1.4).
-            property real verticalContentHeight: widgetHeight * 5.8 + rowSpacing * 3
+            // Natural height of the portrait stack: Canvas(3.0) + 3 rows(1.6/4.2/1.2).
+            property real verticalContentHeight: widgetHeight * 10.0 + rowSpacing * 3
 
             // Only used to size the horizontal pocket (content-driven).
-            implicitHeight: topPad + (widgetHeight * 3) + (rowSpacing * 2) + bottomPad
+            // The radar column is the tallest: Radar(4.2) + weather row(1.2), plus 1 gap.
+            implicitHeight: topPad + (widgetHeight * 5.4) + rowSpacing + bottomPad
 
             Loader {
               anchors.fill: parent
@@ -879,11 +1325,15 @@ Scope {
               sourceComponent: metrics.isVertical ? verticalDash : horizontalDash
             }
 
-            // ---- Landscape: original 4-column layout (unchanged) ----
+            // ---- Landscape: 3-column layout (Services | Stats | Radar) ----
             Component {
               id: horizontalDash
-              RowLayout {
+              ColumnLayout {
                 anchors.fill: parent
+                spacing: dashboardGrid.rowSpacing
+
+                RowLayout {
+                Layout.fillWidth: true
                 spacing: dashboardGrid.colSpacing
 
                 // Columns 1-2: Services (2-tall) + SystemStats/MiscStats side by side
@@ -893,15 +1343,14 @@ Scope {
                   Layout.preferredWidth: 2
                   spacing: dashboardGrid.rowSpacing
 
-                  ServicesWidget {
-                    id: servicesWidget
+                  CanvasWidget {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: dashboardGrid.widgetHeight * 1.5 + dashboardGrid.rowSpacing * 0.5
+                    Layout.preferredHeight: dashboardGrid.widgetHeight * 3.0
                   }
 
                   RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: dashboardGrid.widgetHeight * 1.5 + dashboardGrid.rowSpacing * 0.5
+                    Layout.preferredHeight: dashboardGrid.widgetHeight * 1.6
                     spacing: dashboardGrid.colSpacing
 
                     SystemStatsWidget {
@@ -916,45 +1365,42 @@ Scope {
                   }
                 }
 
-                // Column 3: 3 widgets stacked
+                // Column 3: Radar map (fills the cell) + Weather/Network row underneath.
+                // preferredWidth 4 vs 2 above: the map takes ~2/3 of the dashboard.
                 ColumnLayout {
                   Layout.fillWidth: true
                   Layout.fillHeight: true
-                  Layout.preferredWidth: 1
+                  Layout.preferredWidth: 4
                   spacing: dashboardGrid.rowSpacing
 
-                  QuoteWidget {
-                    id: quoteWidget
+                  Item {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: dashboardGrid.widgetHeight
+                    Layout.preferredHeight: dashboardGrid.widgetHeight * 4.2
+
+                    RadarWidget {
+                      anchors.fill: parent
+                    }
                   }
 
-                  WeatherWidget {
-                    id: weatherWidget
+                  RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: dashboardGrid.widgetHeight
-                  }
+                    Layout.preferredHeight: dashboardGrid.widgetHeight * 1.2
+                    spacing: dashboardGrid.colSpacing
 
-                  NetworkStatsWidget {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: dashboardGrid.widgetHeight
-                  }
-                }
+                    WeatherWidget {
+                      id: weatherWidget
+                      Layout.fillWidth: true
+                      Layout.fillHeight: true
+                    }
 
-                // Column 4: Profile card (2-tall) + empty space
-                ColumnLayout {
-                  Layout.fillWidth: true
-                  Layout.fillHeight: true
-                  Layout.preferredWidth: 1
-                  spacing: dashboardGrid.rowSpacing
-
-                  ProfileWidget {
-                    id: profileWidget
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
+                    NetworkStatsWidget {
+                      Layout.fillWidth: true
+                      Layout.fillHeight: true
+                    }
                   }
                 }
               }
+            }
             }
 
             // ---- Portrait: 2-column reflow (Services spans the top) ----
@@ -964,9 +1410,9 @@ Scope {
                 anchors.fill: parent
                 spacing: dashboardGrid.rowSpacing
 
-                ServicesWidget {
+                CanvasWidget {
                   Layout.fillWidth: true
-                  Layout.preferredHeight: dashboardGrid.widgetHeight * 1.5
+                  Layout.preferredHeight: dashboardGrid.widgetHeight * 3.0
                 }
 
                 RowLayout {
@@ -977,20 +1423,21 @@ Scope {
                   MiscStatsWidget { Layout.fillWidth: true; Layout.fillHeight: true }
                 }
 
-                RowLayout {
+                Item {
                   Layout.fillWidth: true
-                  Layout.preferredHeight: dashboardGrid.widgetHeight * 1.3
-                  spacing: dashboardGrid.colSpacing
-                  QuoteWidget { Layout.fillWidth: true; Layout.fillHeight: true }
-                  WeatherWidget { Layout.fillWidth: true; Layout.fillHeight: true }
+                  Layout.preferredHeight: dashboardGrid.widgetHeight * 4.2
+
+                  RadarWidget {
+                    anchors.fill: parent
+                  }
                 }
 
                 RowLayout {
                   Layout.fillWidth: true
-                  Layout.preferredHeight: dashboardGrid.widgetHeight * 1.4
+                  Layout.preferredHeight: dashboardGrid.widgetHeight * 1.2
                   spacing: dashboardGrid.colSpacing
+                  WeatherWidget { Layout.fillWidth: true; Layout.fillHeight: true }
                   NetworkStatsWidget { Layout.fillWidth: true; Layout.fillHeight: true }
-                  ProfileWidget { Layout.fillWidth: true; Layout.fillHeight: true }
                 }
               }
             }

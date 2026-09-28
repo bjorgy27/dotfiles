@@ -21,9 +21,7 @@ Item {
 
     ColumnLayout {
       anchors {
-        verticalCenter: parent.verticalCenter
-        left: parent.left
-        right: parent.right
+        fill: parent
         margins: metrics.spacingLarge
       }
       spacing: metrics.spacingSmall

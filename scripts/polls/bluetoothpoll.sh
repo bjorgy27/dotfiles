@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bluetooth status. Output format:
 #   power|<on|off|unavailable>
-#   device|<MAC>|<Name>|<connected:0|1>|<battery_or_NA>|<icon>
+#   device|<MAC>|<Name>|<connected:0|1>|<paired:0|1>|<battery_or_NA>|<icon>
 
 if ! command -v bluetoothctl >/dev/null 2>&1; then
   echo "power|unavailable"
@@ -29,6 +29,9 @@ timeout 2 bluetoothctl devices 2>/dev/null | while read -r _ mac rest; do
   connected=$(echo "$info" | awk -F': ' '/^\s*Connected:/{print ($2 == "yes" ? 1 : 0); exit}')
   [ -z "$connected" ] && connected=0
 
+  paired=$(echo "$info" | awk -F': ' '/^\s*Paired:/{print ($2 == "yes" ? 1 : 0); exit}')
+  [ -z "$paired" ] && paired=0
+
   icon=$(echo "$info" | awk -F': ' '/^\s*Icon:/{print $2; exit}')
 
   battery="NA"
@@ -37,5 +40,5 @@ timeout 2 bluetoothctl devices 2>/dev/null | while read -r _ mac rest; do
     [ -n "$bat" ] && battery="$bat"
   fi
 
-  echo "device|$mac|$name|$connected|$battery|$icon"
+  echo "device|$mac|$name|$connected|$paired|$battery|$icon"
 done

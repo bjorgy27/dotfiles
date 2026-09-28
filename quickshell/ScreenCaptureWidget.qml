@@ -35,19 +35,19 @@ Item {
 
   Process {
     id: screenshotRegionProc
-    command: ["hyprctl", "dispatch", "exec", "bash " + root.home + "/.config/scripts/hyprland_capture_partial.sh"]
+    command: ["hyprctl", "dispatch", 'hl.dsp.exec_cmd("bash ' + root.home + '/.config/scripts/hyprland_capture_partial.sh")']
     running: false
   }
 
   Process {
     id: recordStartFullProc
-    command: ["hyprctl", "dispatch", "exec", "bash " + root.home + "/.config/scripts/hyprland_record_full.sh"]
+    command: ["hyprctl", "dispatch", 'hl.dsp.exec_cmd("bash ' + root.home + '/.config/scripts/hyprland_record_full.sh")']
     running: false
   }
 
   Process {
     id: recordStartRegionProc
-    command: ["hyprctl", "dispatch", "exec", "bash " + root.home + "/.config/scripts/hyprland_record_region.sh"]
+    command: ["hyprctl", "dispatch", 'hl.dsp.exec_cmd("bash ' + root.home + '/.config/scripts/hyprland_record_region.sh")']
     running: false
   }
 
