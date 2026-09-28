@@ -1,3 +1,6 @@
 [user]
 	name = BeckJorgensen
 	email = bjorgy27@proton.me
+[include]
+	# machine-only settings (e.g. http.version on the laptop)
+	path = ~/.gitconfig.local

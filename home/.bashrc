@@ -10,3 +10,6 @@ alias grep='grep --color=auto'
 PS1='[\u@\h \W]\$ '
 export PATH="$HOME/.local/bin:$PATH"
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+
+# Machine-only additions (e.g. PATH for software installed on one box).
+[ -f "$HOME/.bashrc.local" ] && . "$HOME/.bashrc.local"
