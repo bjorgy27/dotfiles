@@ -67,6 +67,14 @@ hl.animation({ leaf = "windows",    enabled = true, speed = 5, bezier = "UWU1", 
 hl.animation({ leaf = "fade",       enabled = true, speed = 3, bezier = "default" })
 hl.animation({ leaf = "workspaces", enabled = true, speed = 4, bezier = "UWU1",    style = "slidevert" })
 
+-- Never idle (lock / dpms off) while any window is fullscreen, e.g. video
+hl.window_rule({
+    name  = "idle-inhibit-fullscreen",
+    match = { class = ".*" },
+
+    idle_inhibit = "fullscreen",
+})
+
 hl.on("hyprland.start", function()
     hl.exec_cmd("hyprpm reload -n")
     hl.exec_cmd("hypridle")
