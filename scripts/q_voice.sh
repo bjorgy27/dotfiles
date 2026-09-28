@@ -100,7 +100,7 @@ status() {
   echo "vad model: $Q_VAD_MODEL $([ -f "$Q_VAD_MODEL" ] && echo ok || echo MISSING — q_voice.sh setup)"
   curl -s -m 2 -o /dev/null -w "whisper-server: http=%{http_code}\n" "${Q_WHISPER_URL%/inference}/" || echo "whisper-server: unreachable"
   local tts="${Q_TTS:-auto}"; local chain=""
-  [ -n "${Q_ELEVENLABS_API_KEY:-}" ] && [ -n "${Q_ELEVENLABS_VOICE:-}" ] && chain="$chain elevenlabs"
+  [ -n "${Q_ELEVENLABS_API_KEY:-}" ] && [ -n "${Q_ELEVENLABS_VOICE:-N2lVS1w4EtoT3dr4eOWO}" ] && chain="$chain elevenlabs"
   [ -n "${Q_GATEWAY_SSH:-}" ] && chain="$chain gateway(${Q_GATEWAY_SSH})"
   command -v "${Q_PIPER_BIN:-piper}" >/dev/null && chain="$chain piper" || chain="$chain (piper missing)"
   echo "tts: $tts —$chain"
