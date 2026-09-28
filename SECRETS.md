@@ -20,6 +20,26 @@ chmod 600 ~/.config/canvas.key ~/.config/tessie.key
 Without these, the corresponding quickshell widgets will just show their "no api key" error
 state - nothing else breaks.
 
+## Bambu Lab printer (LAN mode)
+
+The `bambu` quickshell widget reads print progress straight off the printer, with no
+cloud account involved. It needs the printer's address, serial and LAN access code:
+
+```sh
+cat > ~/.config/bambu.conf <<'EOF'
+BAMBU_HOST=<printer's address on the LAN>
+BAMBU_SERIAL=<serial, shown on the printer and in Bambu Studio>
+BAMBU_CODE=<LAN access code from the printer screen>
+EOF
+chmod 600 ~/.config/bambu.conf
+```
+
+The access code lives on the printer under network / LAN mode settings, and changes if
+LAN mode is toggled off and on. Used by `scripts/polls/bambupoll.sh`, which shells out to
+`scripts/polls/bambu_mqtt.py`. Without the file the widget just shows a setup hint.
+
+Note the address is whatever DHCP handed the printer; a static lease is worth setting.
+
 ## Claude Code login
 
 `~/.claude/.credentials.json` is per-machine and is not in this repo. On the new machine, run:

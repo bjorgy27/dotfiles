@@ -35,7 +35,8 @@ Item {
     "radar":       { file: "RadarWidget.qml" },
     "weather":     { file: "WeatherWidget.qml" },
     "network":     { file: "NetworkStatsWidget.qml" },
-    "music":       { file: "MusicWidget.qml" }
+    "music":       { file: "MusicWidget.qml" },
+    "bambu":       { file: "BambuWidget.qml" }
   })
 
   readonly property string configDir: root.home + "/.config/quickshell"

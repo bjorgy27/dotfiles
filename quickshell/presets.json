@@ -166,6 +166,45 @@
           "rowSpan": 1.6
         }
       ]
+    },
+    "printer": {
+      "columns": 4,
+      "widthPercent": 55,
+      "widgets": [
+        {
+          "type": "bambu",
+          "col": 0,
+          "row": 0,
+          "colSpan": 2,
+          "rowSpan": 1.8
+        },
+        {
+          "type": "systemstats",
+          "col": 2,
+          "row": 0,
+          "rowSpan": 1.8
+        },
+        {
+          "type": "miscstats",
+          "col": 3,
+          "row": 0,
+          "rowSpan": 1.8
+        },
+        {
+          "type": "weather",
+          "col": 0,
+          "row": 1.8,
+          "colSpan": 2,
+          "rowSpan": 1.2
+        },
+        {
+          "type": "network",
+          "col": 2,
+          "row": 1.8,
+          "colSpan": 2,
+          "rowSpan": 1.2
+        }
+      ]
     }
   }
 }
