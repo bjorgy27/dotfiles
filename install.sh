@@ -63,7 +63,8 @@ if [ ! -d "$HOME/.oh-my-zsh" ]; then
   git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh "$HOME/.oh-my-zsh"
 fi
 
-if ! rustup default >/dev/null 2>&1; then
+# Rust comes from either the `rust` package or rustup; only rustup needs a toolchain picked.
+if command -v rustup >/dev/null && ! rustup default >/dev/null 2>&1; then
   echo "==> Rust stable toolchain"
   rustup default stable
 fi

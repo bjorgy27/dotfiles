@@ -41,7 +41,6 @@ python-pip
 python-requests
 qt6-5compat
 qt6ct
-rustup
 sddm
 slurp
 socat
