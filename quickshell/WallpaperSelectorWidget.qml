@@ -67,7 +67,9 @@ Item {
     FolderListModel {
         id: wallpaperModel
         folder: "file://" + Quickshell.env("HOME") + "/.config/wallpapers"
-        nameFilters: ["*.jpg", "*.png", "*.jpeg", "*.webp"]
+        // *.live: a dynamic wallpaper (scripts/wallpaper/bins/<stem>) with no
+        // still of its own; the carousel shows it running (see the delegate).
+        nameFilters: ["*.jpg", "*.png", "*.jpeg", "*.webp", "*.live"]
         showDirs: false
     }
 
@@ -75,9 +77,24 @@ Item {
     property bool restoringSelection: false
     property string savedWallpaperPath: ""
     property string pendingWallpaperPath: ""
+    // Last previewed path, applied for real once the selection settles or
+    // the selector closes.
+    property string commitWallpaperPath: ""
+
+    readonly property string wallpaperScript: Quickshell.env("HOME") + "/.config/scripts/wallpaper/wallpaper_select.sh"
 
     function normalizedPath(path) {
         return String(path || "").replace(/[\r\n]+/gm, "");
+    }
+
+    // A dynamic wallpaper saved under another extension (the globe used to
+    // be spinning_globe.png) still selects its .live entry.
+    function sameWallpaper(itemPath, saved) {
+        itemPath = normalizedPath(itemPath);
+        if (itemPath === saved)
+            return true;
+        let stem = p => p.replace(/\.[^./]*$/, "");
+        return itemPath.endsWith(".live") && stem(itemPath) === stem(saved);
     }
 
     function queueWallpaper(path) {
@@ -96,34 +113,67 @@ Item {
         let cleanPath = pendingWallpaperPath;
         pendingWallpaperPath = "";
         savedWallpaperPath = cleanPath;
-        // Fire-and-forget: a tracked Process re-couples the selector to daemon
-        // startup time (a booting dynamic wallpaper blocks the queue for
-        // seconds). The script serializes concurrent runs itself via flock.
-        Quickshell.execDetached([
-            Quickshell.env("HOME") + "/.config/scripts/wallpaper/wallpaper_select.sh",
-            cleanPath
-        ]);
+        commitWallpaperPath = cleanPath;
+        // The preview already switches for real (static images from a RAM
+        // cache, the globe is kept running and just shown/hidden, no layer
+        // maps/unmaps); the commit after the selection settles only saves it.
+        // Fire-and-forget: the script serializes concurrent runs via flock and
+        // drops previews superseded by a newer request.
+        Quickshell.execDetached([wallpaperScript, "--preview", cleanPath]);
+        wallpaperSettle.restart();
+    }
+
+    function applyWallpaper() {
+        wallpaperSettle.stop();
+        if (commitWallpaperPath.length === 0)
+            return;
+
+        let cleanPath = commitWallpaperPath;
+        commitWallpaperPath = "";
+        // Safety net: a cold start of a dynamic wallpaper (not yet warm) maps
+        // layers, which can steal the keyboard; root takes it back while the
+        // selector is open.
+        root.guardSelectorFocus(1000);
+        Quickshell.execDetached([wallpaperScript, cleanPath]);
+    }
+
+    function commitWallpaper() {
+        if (wallpaperDebounce.running) {
+            wallpaperDebounce.stop();
+            if (pendingWallpaperPath.length > 0) {
+                savedWallpaperPath = pendingWallpaperPath;
+                commitWallpaperPath = pendingWallpaperPath;
+            }
+            pendingWallpaperPath = "";
+        }
+
+        applyWallpaper();
+    }
+
+    onIsOpenChanged: {
+        if (!isOpen)
+            commitWallpaper();
     }
 
     FileView {
         id: savedWallpaperReader
         path: Quickshell.env("HOME") + "/.config/scripts/wallpaper/wpsave.txt"
+        // reload() is async otherwise, so text() on open would return the file
+        // as of the previous open and the carousel would start on a stale item.
+        blockLoading: true
     }
 
-    // While the view is still settling (animation or drag), StrictlyEnforceRange
-    // keeps rewriting currentIndex from the view position, so firing on the raw
-    // debounce can run the script for transient indices — under load (e.g. a
-    // dynamic wallpaper booting) that cascades into a kill/spawn war between
-    // wallpaper daemons. Re-arm until the offset stops moving, then run once.
-    property real debounceLastOffset: -1
-
+    // While a drag/flick is in progress, StrictlyEnforceRange keeps rewriting
+    // currentIndex from the view position, so re-arm until it ends. Key and
+    // click selection set the final index up front, so they fire 60 ms after
+    // the last step without waiting for the slide animation (still enough to
+    // coalesce a held arrow key's repeats).
     Timer {
         id: wallpaperDebounce
-        interval: 150
+        interval: 60
         repeat: false
         onTriggered: {
-            if (carousel.offset !== wallpaperSelectorWidget.debounceLastOffset) {
-                wallpaperSelectorWidget.debounceLastOffset = carousel.offset;
+            if (carousel.dragging || carousel.flicking) {
                 restart();
                 return;
             }
@@ -131,10 +181,28 @@ Item {
         }
     }
 
+    // Saves the previewed selection once navigation pauses (it's already on
+    // screen, so this doesn't affect how fast switching feels).
+    Timer {
+        id: wallpaperSettle
+        interval: 250
+        repeat: false
+        onTriggered: {
+            if (wallpaperDebounce.running || carousel.dragging || carousel.flicking) {
+                restart();
+                return;
+            }
+            applyWallpaper();
+        }
+    }
+
     onVisibleChanged: {
         savedWallpaperReader.reload();
 
         if (visible) {
+            // Make sure the globe is running (hidden) and the scaled copies
+            // are cached; a no-op when they already are.
+            Quickshell.execDetached(["nice", "-n", "19", wallpaperScript, "--warm"]);
             savedWallpaperPath = normalizedPath(savedWallpaperReader.text());
             
             let applySelection = () => {
@@ -150,7 +218,7 @@ Item {
                     found = true;
                 } else {
                     for (let i = 0; i < wallpaperModel.count; i++) {
-                        if (normalizedPath(wallpaperModel.get(i, "filePath")) === savedWallpaperPath) {
+                        if (sameWallpaper(wallpaperModel.get(i, "filePath"), savedWallpaperPath)) {
                             carousel.positionViewAtIndex(i, PathView.Center);
                             carousel.currentIndex = i;
                             found = true;
@@ -193,6 +261,7 @@ Item {
         }
 
         focus: visible
+        onActiveFocusChanged: root.setSelectorFocused(barWindow, activeFocus)
 
         Keys.onLeftPressed: root.wallpaperNav(-1)
         Keys.onRightPressed: root.wallpaperNav(1)
@@ -250,23 +319,74 @@ Item {
             
             color: "transparent"
 
-            Image {
+            readonly property bool isLive: fileSuffix === "live"
+            // Live previews start the first time they come onto the visible
+            // part of the path and then stay alive: a hidden BevyView renders
+            // nothing (zero cost closed), while creating the Bevy app blocks
+            // the render thread for ~50 ms per app, so tearing it down on close
+            // made every open stall. The first start waits for the open
+            // animation to finish so that one-time stall doesn't freeze it.
+            property bool liveStarted: false
+            readonly property bool onPath: PathView.onPath
+            function updateLive() {
+                if (liveStarted || !isLive || !onPath || !wallpaperSelectorWidget.isOpen)
+                    liveStartDelay.stop();
+                else
+                    liveStartDelay.start();
+            }
+            Timer {
+                id: liveStartDelay
+                interval: 150
+                onTriggered: wallpaperDelegate.liveStarted = true
+            }
+            onOnPathChanged: updateLive()
+            Component.onCompleted: updateLive()
+            Connections {
+                target: wallpaperSelectorWidget
+                function onIsOpenChanged() { wallpaperDelegate.updateLive() }
+            }
+
+            Item {
                 id: img
                 width: parent.width
                 height: width * 9/16
-                // anchors.margins: PathView.isCurrentItem ? 6 : 0
-                
-                // source is static per delegate! It never changes, so no reloading.
-                source: fileUrl 
-                
-                // Keep the optimization to ensure initial load is fast
-                sourceSize.width: 0
-                sourceSize.height: 400
-                
-                asynchronous: true
-                cache: true
-                clip: true
-                fillMode: Image.PreserveAspectCrop
+
+                Image {
+                    anchors.fill: parent
+                    visible: !wallpaperDelegate.isLive
+                    // source is static per delegate! It never changes, so no reloading.
+                    source: wallpaperDelegate.isLive ? "" : fileUrl
+
+                    // Keep the optimization to ensure initial load is fast
+                    sourceSize.width: 0
+                    sourceSize.height: 400
+
+                    asynchronous: true
+                    cache: true
+                    clip: true
+                    fillMode: Image.PreserveAspectCrop
+                }
+
+                // The wallpaper's background, under the live view until its
+                // first frame (or if the Bevy module/app isn't built).
+                Rectangle {
+                    anchors.fill: parent
+                    visible: wallpaperDelegate.isLive
+                    color: "#1e1e2e"
+                }
+
+                // The dynamic wallpaper itself, rendered in-process by the Bevy
+                // app of the same name at this monitor's size, box-filtered
+                // down. Renders only while on the visible part of the path.
+                Loader {
+                    anchors.fill: parent
+                    active: wallpaperDelegate.isLive && wallpaperDelegate.liveStarted
+                    visible: wallpaperSelectorWidget.isOpen && wallpaperDelegate.onPath
+                    onActiveChanged: if (active) setSource("WallpaperLivePreview.qml", {
+                        app: fileBaseName,
+                        options: JSON.stringify({ output: [barWindow.screen?.width ?? 2560, barWindow.screen?.height ?? 1440] })
+                    })
+                }
 
                 layer.enabled: true
                 layer.effect: OpacityMask {

@@ -455,8 +455,50 @@ Scope {
 
   function closeWallpaperSelectors() { selectorCloseCounter++ }
 
+  // Cold-starting/stopping a dynamic wallpaper maps/unmaps background layers,
+  // and Hyprland's refocus on that hands the keyboard to the window under the
+  // cursor past the grab (or ends the grab). The warm globe avoids this (it's
+  // shown/hidden without unmapping), so this is only a safety net now. While a live switch is in flight, a
+  // lost grab or keyboard focus is taken back; outside that window a lost grab
+  // (e.g. clicking another window) is left alone.
+  property real selectorFocusGuardUntil: 0
+  property var focusedSelectors: []
+
+  function guardSelectorFocus(ms) {
+    selectorFocusGuardUntil = Math.max(selectorFocusGuardUntil, Date.now() + ms)
+    selectorFocusCheck.restart()
+  }
+
+  function setSelectorFocused(window, focused) {
+    let list = focusedSelectors.filter(w => w !== window)
+    if (focused) list.push(window)
+    focusedSelectors = list
+    selectorFocusCheck.restart()
+  }
+
+  Timer {
+    id: selectorFocusCheck
+    interval: 20
+    property real lastRearm: 0
+    onTriggered: {
+      if (root.selectorWindows.length === 0 || Date.now() > root.selectorFocusGuardUntil)
+        return
+      // Rate-limited so a slow keyboard enter can't make it flap.
+      if ((!selectorGrab.active || root.focusedSelectors.length === 0) && Date.now() - lastRearm > 300) {
+        lastRearm = Date.now()
+        // A fresh grab refocuses the keyboard onto a whitelisted window.
+        selectorGrab.active = false
+        selectorGrab.windows = root.selectorWindows
+        selectorGrab.active = true
+      }
+      // Layers can keep changing until the guard ends; keep watching.
+      restart()
+    }
+  }
+
   HyprlandFocusGrab {
     id: selectorGrab
+    onCleared: selectorFocusCheck.restart()
   }
 
   // === PER-SCREEN BAR ===
