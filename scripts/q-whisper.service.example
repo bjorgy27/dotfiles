@@ -1,0 +1,16 @@
+# Local speech-to-text for the voice assistant: whisper.cpp's server on
+# 127.0.0.1:8178 (what q_voice.py expects by default). Installed by
+# `q_voice.sh setup whisper` as ~/.config/systemd/user/q-whisper.service.
+# Pick a model to taste: base.en is fast, small.en is noticeably better.
+[Unit]
+Description=whisper.cpp server for the voice assistant (local speech-to-text)
+After=default.target
+
+[Service]
+ExecStart=%h/.local/src/whisper.cpp/build/bin/whisper-server -m %h/.local/share/whisper/ggml-base.en.bin --host 127.0.0.1 --port 8178 -t 8 -nt
+Restart=on-failure
+RestartSec=3
+Nice=5
+
+[Install]
+WantedBy=default.target

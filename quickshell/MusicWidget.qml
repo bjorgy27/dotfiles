@@ -9,7 +9,7 @@ Item {
   property var options: ({})
   id: musicWidget
   
-  property bool showWidget: bar.state === "normal" || bar.state === "dashboard"
+  property bool showWidget: (bar.state === "normal" || bar.state === "dashboard") && !root.voiceActive
   property bool isDashboard: bar.state === "dashboard"
   // Vertical bar is too thin for the scrolling text; show an icon only there.
   property bool isVertical: false

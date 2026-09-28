@@ -414,6 +414,97 @@ Scope {
     onPressed: dashboardConfig.cycle()
   }
 
+  // Q chat panel (QChatWidget.qml, SUPER+A): only on machines set up for the voice assistant
+  GlobalShortcut {
+    name: "toggleQChat"
+    onPressed: if (root.voiceEnabled) { root.toggleTarget = "q_chat"; root.toggleCounter++ }
+  }
+
+  // === VOICE ASSISTANT STATE (written by scripts/q_voice.py; shown by VoiceBarWidget) ===
+  // Off by default: the indicator only exists on a machine that has the
+  // assistant's per-device config, ~/.config/q-voice/env (q_voice.sh setup).
+  readonly property bool voiceEnabled: voiceConf.loaded
+  FileView {
+    id: voiceConf
+    path: (Quickshell.env("XDG_CONFIG_HOME") || (root.home + "/.config")) + "/q-voice/env"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+  }
+  property string voiceState: "idle"
+  property string voiceText: ""
+  property string voiceReply: ""
+  property bool voiceActive: false   // true while a turn is in flight, plus a short linger so the reply stays readable
+
+  FileView {
+    id: voiceStateFile
+    path: root.voiceEnabled ? Quickshell.env("XDG_RUNTIME_DIR") + "/q-voice/state.json" : ""
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.applyVoiceState()
+  }
+  // The runtime dir is empty after boot, so the watcher may start before the
+  // file exists; a slow reload catches its creation.
+  Timer { interval: 1500; repeat: true; running: root.voiceEnabled; onTriggered: voiceStateFile.reload() }
+  Timer { id: voiceCloseTimer; interval: 1500; onTriggered: root.voiceActive = false }   // no text to read any more, just let the bars settle
+
+  // Voice level feed (mic while listening, sink monitor while speaking), shared by the bar indicator
+  // (VoiceBarWidget) and the chat panel header (QChatWidget).
+  property var voiceLevels: new Array(10).fill(0)
+  property real voiceLevel: 0
+  readonly property bool voiceLive: voiceState === "listening" || voiceState === "speaking"
+  function pushVoiceLevel(v) { voiceLevel = v; let h = voiceLevels.slice(1); h.push(v); voiceLevels = h }
+  readonly property string voiceMeterPy: "import sys,struct,math\nb=sys.stdin.buffer\nwhile True:\n d=b.read(1600)\n if not d: break\n n=len(d)//2\n s=struct.unpack('<%dh'%n,d[:n*2])\n r=math.sqrt(sum(x*x for x in s)/max(n,1))/32768.0\n print(min(1.0,r*7))\n"
+  // Two fixed meters instead of one that swaps its command: restarting a Process from onVoiceStateChanged ran
+  // before `command` re-evaluated, so "speaking" kept metering the mic.
+  Process {
+    running: root.voiceEnabled && root.voiceState === "listening"
+    command: ["bash", "-c", "pw-record --format s16 --rate 16000 --channels 1 --latency 50ms - 2>/dev/null | python3 -u -c \"" + root.voiceMeterPy + "\""]
+    stdout: SplitParser { onRead: data => { let v = parseFloat(data); if (!isNaN(v)) root.pushVoiceLevel(v) } }
+  }
+  Process {
+    running: root.voiceEnabled && root.voiceState === "speaking"
+    command: ["bash", "-c", "pw-record -P '{ stream.capture.sink = true }' --format s16 --rate 16000 --channels 1 --latency 50ms - 2>/dev/null | python3 -u -c \"" + root.voiceMeterPy + "\""]
+    stdout: SplitParser { onRead: data => { let v = parseFloat(data); if (!isNaN(v)) root.pushVoiceLevel(v) } }
+  }
+  // soft motion while decoding / thinking; decay otherwise
+  Timer {
+    interval: 80; repeat: true
+    running: root.voiceState === "thinking" || root.voiceState === "transcribing"
+    onTriggered: root.pushVoiceLevel(0.1 + 0.2 * (0.5 + 0.5 * Math.sin(Date.now() / 240)) + Math.random() * 0.05)
+  }
+  Timer {
+    interval: 80; repeat: true
+    running: !root.voiceLive && root.voiceState !== "thinking" && root.voiceState !== "transcribing" && root.voiceLevel > 0.01
+    onTriggered: root.pushVoiceLevel(root.voiceLevel * 0.7)
+  }
+
+  // Live event feed from every q_voice.py process (they append to events.jsonl): the chat panel
+  // renders transcripts, live partials and replies from it, whichever of SUPER+T / the panel started the turn.
+  signal qEvent(var ev)
+  Process {
+    running: root.voiceEnabled
+    command: ["bash", "-c", "d=\"${XDG_RUNTIME_DIR:-/tmp}/q-voice\"; mkdir -p \"$d\"; touch \"$d/events.jsonl\"; exec tail -n0 -F \"$d/events.jsonl\" 2>/dev/null"]
+    stdout: SplitParser { onRead: data => { let ev; try { ev = JSON.parse(data) } catch (e) { return } root.qEvent(ev) } }
+  }
+
+  function applyVoiceState() {
+    let s
+    try { s = JSON.parse(voiceStateFile.text()) } catch (e) { return }
+    let prev = root.voiceState
+    root.voiceText = s.text ?? ""
+    root.voiceReply = s.reply ?? ""
+    root.voiceState = s.state ?? "idle"
+    if (root.voiceState !== "idle") {
+      voiceCloseTimer.stop()
+      root.voiceActive = true
+    } else if (prev !== "idle") {
+      voiceCloseTimer.restart()
+    }
+  }
+
+
   // Dashboard presets (presets.json / presets.local.json), shared by every screen.
   DashboardConfig {
     id: dashboardConfig
@@ -623,7 +714,7 @@ Scope {
       // they grab exclusively. The wallpaper selector is mouse-navigable, so it uses
       // OnDemand — an Exclusive grab is global and blocks clicks on other monitors.
       // Its arrow keys arrive via root's shared HyprlandFocusGrab instead.
-      WlrLayershell.keyboardFocus: (bar.state === "app_selector" || bar.state === "power_menu" || bar.state === "network" || bar.state === "bluetooth" || bar.state === "radar_settings")
+      WlrLayershell.keyboardFocus: (bar.state === "app_selector" || bar.state === "power_menu" || bar.state === "q_chat" || bar.state === "network" || bar.state === "bluetooth" || bar.state === "radar_settings")
             ? WlrKeyboardFocus.Exclusive
             : (bar.state === "wallpaper_selector")
             ? WlrKeyboardFocus.OnDemand
@@ -875,6 +966,16 @@ Scope {
               }
             },
             State {
+              name: "q_chat"
+              PropertyChanges {
+                target: bar;
+                dropdownWidth: metrics.isVertical ? metrics.longPct(85) : metrics.longPct(34);
+                dropdownHeight: metrics.isVertical ? metrics.crossPct(55) : metrics.crossPct(62);
+                dropdownFilletRadius: metrics.radiusXL;
+                dropdownCornerRadius: metrics.radiusXL;
+              }
+            },
+            State {
               name: "app_selector"
               PropertyChanges {
                 target: bar;
@@ -956,6 +1057,15 @@ Scope {
 
           // Music/Weather widget centered on the long axis
           MusicWidget {
+            isVertical: metrics.isVertical
+            anchors {
+              horizontalCenter: parent.horizontalCenter
+              verticalCenter: parent.verticalCenter
+            }
+          }
+
+          // Voice assistant indicator takes over the same slot while a voice turn is in flight
+          VoiceBarWidget {
             isVertical: metrics.isVertical
             anchors {
               horizontalCenter: parent.horizontalCenter
@@ -1330,6 +1440,8 @@ Scope {
           }
 
           PowerMenuWidget {}
+
+          QChatWidget {}
 
           NetworkManagerWidget {}
 
