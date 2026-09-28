@@ -411,8 +411,30 @@ def listen(start_timeout, hint):
 
 
 # ---------------------------------------------------------------- STT
+STT = E("Q_STT", "auto")                            # auto (ElevenLabs Scribe if a key is set) | elevenlabs | whisper
+EL_STT_MODEL = E("Q_ELEVENLABS_STT_MODEL", "scribe_v2")
+
+
+def transcribe_elevenlabs(wav_bytes):
+    r = SESSION.post("https://api.elevenlabs.io/v1/speech-to-text", headers={"xi-api-key": EL_KEY},
+                     files={"file": ("rec.wav", wav_bytes, "audio/wav")},
+                     data={"model_id": EL_STT_MODEL, "language_code": "en", "tag_audio_events": "false"}, timeout=30)
+    r.raise_for_status()
+    return r.json().get("text", "")
+
+
 def transcribe(wav_bytes):
     txt = ""
+    if STT == "elevenlabs" or (STT == "auto" and EL_KEY):
+        try:
+            txt = transcribe_elevenlabs(wav_bytes)
+            dbg(f"stt[elevenlabs] {len(txt)} chars")
+        except Exception as e:  # noqa  (falls back to the local whisper-server below)
+            dbg(f"stt[elevenlabs] failed: {e}")
+            txt = ""
+    if txt.strip():
+        txt = re.sub(r"\[[^\]]*\]|\([^)]*\)", "", txt.replace("\n", " "))
+        return re.sub(r"\s+", " ", txt).strip()
     try:
         r = SESSION.post(WHISPER_URL, files={"file": ("rec.wav", wav_bytes, "audio/wav")},
                          data={"temperature": "0", "response_format": "text"}, timeout=60)
