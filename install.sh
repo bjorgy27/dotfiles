@@ -42,8 +42,31 @@ for name in "${CONFIG_ENTRIES[@]}"; do
   echo "    $dest -> $entry"
 done
 
-# Machine-local settings (home location etc.) are gitignored; seed from the example.
+echo "==> Linking home dotfiles"
+for entry in "$REPO_DIR"/home/.[!.]*; do
+  name="$(basename "$entry")"
+  dest="$HOME/$name"
+  if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+    echo "    backing up existing $dest -> $dest.bak"
+    mv "$dest" "$dest.bak"
+  fi
+  ln -sfn "$entry" "$dest"
+  echo "    $dest -> $entry"
+done
+
+# Machine-local settings are gitignored; seed them from the examples.
 cp -n "$REPO_DIR/quickshell/local.example.js" "$REPO_DIR/quickshell/local.js"
+cp -n "$REPO_DIR/hypr/perdevice.example.lua" "$REPO_DIR/hypr/perdevice.lua"
+
+if [ ! -d "$HOME/.oh-my-zsh" ]; then
+  echo "==> Oh My Zsh (for .zshrc)"
+  git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh "$HOME/.oh-my-zsh"
+fi
+
+if ! rustup default >/dev/null 2>&1; then
+  echo "==> Rust stable toolchain"
+  rustup default stable
+fi
 
 chmod +x "$CONFIG_DIR"/scripts/*.sh "$CONFIG_DIR"/scripts/**/*.sh 2>/dev/null || true
 
@@ -57,7 +80,14 @@ else
 fi
 
 echo "==> Enabling services"
-sudo systemctl enable sddm.service
+# Only claim the login screen if no other display manager already has it.
+if [ -e /etc/systemd/system/display-manager.service ] && \
+   [ "$(basename "$(readlink -f /etc/systemd/system/display-manager.service)")" != "sddm.service" ]; then
+  echo "    another display manager is enabled; leaving it alone (not enabling sddm)"
+else
+  sudo systemctl enable sddm.service
+fi
+sudo systemctl enable --now tailscaled.service
 systemctl --user enable wireplumber.service pipewire.socket pipewire-pulse.socket
 
 echo "==> Claude Code config"
@@ -78,6 +108,15 @@ cat <<'EOF'
    Run `claude` and complete the login flow - credentials are per-machine
    and intentionally not synced.
 
-3. Log out and select Hyprland at the SDDM login screen.
+3. Tailscale: run `sudo tailscale up` once and log in, to join this machine
+   to the tailnet.
+
+4. Monitors: edit ~/.config/hypr/perdevice.lua for this machine's screens
+   (`hyprctl monitors` lists them). Until then every screen gets its
+   preferred mode.
+
+5. Radar home location: set homeLat/homeLon in ~/.config/quickshell/local.js.
+
+6. Log out and select Hyprland at the login screen.
 
 EOF

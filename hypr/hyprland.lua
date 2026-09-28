@@ -1,8 +1,11 @@
 local mainMod = "SUPER"
 
-hl.monitor({ output = "HDMI-A-1", mode = "preferred", position = "0x0", scale = "1" })
-hl.monitor({ output = "DP-1", mode = "2560x1440@120", position = "2560x0", scale = "1" })
-hl.monitor({ output = "DP-2", mode = "2560x1440@180", position = "0x0", scale = "1" })
+-- Per-device knobs (monitors, cursor, workspace ownership) live in the
+-- gitignored ~/.config/hypr/perdevice.lua; see perdevice.example.lua.
+DEVICE = { mainMod = mainMod, monitor_priority = {} }
+
+-- Catch-all: any screen perdevice.lua doesn't name gets its preferred mode.
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" })
 
 hl.config({
     general = {
@@ -36,9 +39,6 @@ hl.config({
         cm_enabled = false,
     },
 
-    cursor = {
-        default_monitor = "DP-1",
-    },
 })
 
 hl.config({
@@ -142,6 +142,8 @@ hl.bind(mainMod .. " + R",            hl.dsp.global("quickshell:toggleAppSelecto
 hl.bind(mainMod .. " + mouse:272",    hl.dsp.window.drag(),   { mouse = true })
 hl.bind(mainMod .. " + mouse:273",    hl.dsp.window.resize(), { mouse = true })
 
+-- Loaded before split-monitor-workspaces so DEVICE.monitor_priority is known.
+
 package.path = package.path .. ";./?.lua;./?/init.lua"
 local smw = require("plugins.split-monitor-workspaces")
 
@@ -149,7 +151,7 @@ smw.setup({
     workspace_count = 10,
     keep_focused = true,
     enable_persistent_workspaces = true,
-    monitor_priority = { "DP-1", "HDMI-A-1" },
+    monitor_priority = DEVICE.monitor_priority,
 })
 
 for i = 1, smw.get_amount_of_workspaces() do
