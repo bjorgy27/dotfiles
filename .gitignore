@@ -11,3 +11,5 @@ scripts/wallpaper/bins/spinning_globe/target
 quickshell/local.js
 # per-machine dashboard presets
 quickshell/presets.local.json
+__pycache__/
+*.pyc
