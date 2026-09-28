@@ -161,6 +161,8 @@ hl.bind(mainMod .. " + mouse:272",    hl.dsp.window.drag(),   { mouse = true })
 hl.bind(mainMod .. " + mouse:273",    hl.dsp.window.resize(), { mouse = true })
 
 -- Loaded before split-monitor-workspaces so DEVICE.monitor_priority is known.
+local perdevice = os.getenv("HOME") .. "/.config/hypr/perdevice.lua"
+if io.open(perdevice, "r") then dofile(perdevice) end
 
 package.path = package.path .. ";./?.lua;./?/init.lua"
 local smw = require("plugins.split-monitor-workspaces")
@@ -184,8 +186,6 @@ for i = 1, smw.get_amount_of_workspaces() do
     hl.bind("ALT + " .. key,                    smw.move_to_workspace(ws))
 end
 
-local perdevice = os.getenv("HOME") .. "/.config/hypr/perdevice.lua"
-if io.open(perdevice, "r") then dofile(perdevice) end
 
 -- Surviving the monitors being switched off ---------------------------------
 -- These panels drop the DP/HDMI link when they power down (DPMS off does it
