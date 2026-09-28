@@ -63,6 +63,23 @@ import numpy as np
 import requests
 
 # ---------------------------------------------------------------- config (env)
+# The panel runs this script directly (no q_voice.sh), so read the per-machine
+# config file here too; values already in the environment win.
+def _load_conf(path=os.environ.get("Q_CONF") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "q-voice/env")):
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                v = v.split(" #", 1)[0].strip().strip('"').strip("'")
+                os.environ.setdefault(k.strip(), v)
+    except OSError:
+        pass
+
+
+_load_conf()
 E = os.environ.get
 HOME = os.path.expanduser("~")
 RUN = os.path.join(E("XDG_RUNTIME_DIR", "/tmp"), "q-voice")
