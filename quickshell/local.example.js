@@ -3,3 +3,4 @@
 // install.sh copies this to local.js if it doesn't exist; edit local.js, not this file.
 var homeLat = 0.0;
 var homeLon = 0.0;
+var voiceHeadset = "";  // name of the Bluetooth headset whose button starts a voice turn ("" = none)

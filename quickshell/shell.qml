@@ -120,6 +120,14 @@ Scope {
   property int btConnectedCount: 0
   property string btConnectedName: ""
 
+  // Headset whose button starts a voice turn (gitignored local.js; "" = none). When it is
+  // connected the bar shows a mic next to the Bluetooth icon: press play on the headphones
+  // and q_voice_key.sh opens the mic instead of the music.
+  readonly property string voiceHeadset: (typeof Local.voiceHeadset === "string") ? Local.voiceHeadset : ""
+  readonly property bool voiceHeadsetOn: root.voiceEnabled && root.voiceHeadset !== ""
+                                         && root.btPower === "on" && root.btConnectedCount > 0
+                                         && root.btConnectedName.toLowerCase().indexOf(root.voiceHeadset.toLowerCase()) >= 0
+
   function forceBluetoothStatusRefresh() { bluetoothStatusProc.running = true }
 
   PollProcess {
@@ -1285,6 +1293,15 @@ Scope {
                 Text {
                   text: (root.btPower === "on" && root.btConnectedCount > 0) ? "󰂱" : "󰂯"
                   color: bluetoothIndicator.btColor
+                  font.pixelSize: metrics.fontNormal
+                  font.family: "monospace"
+                  font.bold: true
+                }
+                // Voice headset connected: its play button opens the mic. Lights up while listening.
+                Text {
+                  visible: root.voiceHeadsetOn
+                  text: root.voiceState === "listening" ? "󰍬" : "󰍮"
+                  color: root.voiceState === "listening" ? Theme.colors.green : bluetoothIndicator.btColor
                   font.pixelSize: metrics.fontNormal
                   font.family: "monospace"
                   font.bold: true
