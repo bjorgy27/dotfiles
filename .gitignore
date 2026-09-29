@@ -13,3 +13,13 @@ quickshell/local.js
 quickshell/presets.local.json
 __pycache__/
 *.pyc
+
+# Dotfiles repo only: documents never belong here (project repos keep their own rules)
+*.pdf
+*.ppt
+*.pptx
+*.odp
+*.doc
+*.docx
+# Qt file-dialog history, different on every machine
+QtProject.conf
