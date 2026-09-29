@@ -37,6 +37,7 @@ pipewire
 pipewire-pulse
 playerctl
 poppler
+probe-rs
 python-pip
 python-requests
 qt6-5compat

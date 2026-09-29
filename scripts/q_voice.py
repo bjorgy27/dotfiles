@@ -96,6 +96,8 @@ SPEAKER_URL = E("Q_SPEAKER_URL", "")             # q-speaker /identify (can be s
 SPEAKERS_FILE = E("Q_SPEAKERS", os.path.join(HOME, ".config/q-voice/speakers.json"))  # who the profiles are
 KEEP_CLIPS = int(E("Q_KEEP_CLIPS", "40"))        # turns of audio kept for after-the-fact enrollment
 CLIPS_DIR = os.path.join(STATE_DIR, "clips")
+ONLY_OWNER = E("Q_ONLY_OWNER", "1") not in ("0", "", "false")   # spoken turns: household only
+REFUSAL = E("Q_REFUSAL", "I answer to Beck alone, I'm afraid. Do carry on without me.")
 GATEWAY_URL = E("Q_GATEWAY_URL", "")
 GATEWAY_TOKEN = E("Q_GATEWAY_TOKEN", "")
 AGENT = E("Q_AGENT", "main")
@@ -596,6 +598,14 @@ def save_clip(wav_bytes):
         return None
 
 
+def is_stranger(spk):
+    """True only when the voice is confidently somebody outside the household. 'unsure' and
+    'unknown' (short clip, service down, nobody enrolled) stay allowed on purpose: a bad match
+    should never lock the owner out of his own machine."""
+    who = (spk or {}).get("speaker")
+    return bool(who) and who not in HOUSEHOLD and who not in ("unsure", "unknown")
+
+
 def speaker_note(spk):
     """Prompt fragment telling the model who is talking."""
     if not spk:
@@ -927,6 +937,15 @@ class Player:
 def run_turn(text, t_speech_end=None, speaker=None):
     """Stream the reply for `text` and speak it. Returns (reply, interrupted).
     `speaker` is a q-speaker /identify result (or None): it labels the log and tells the model who is talking."""
+    if ONLY_OWNER and is_stranger(speaker):
+        who = speaker.get("speaker")
+        heard = "an unrecognized voice" if who == "guest" else SHORT_NAMES.get(who, who.title())
+        dbg(f"refused a spoken turn from {heard} (Q_ONLY_OWNER)")
+        emit({"type": "transcript", "text": text, "via": VIA, "speaker": heard})
+        set_state("idle", text, REFUSAL, speaker)
+        say_line(REFUSAL)
+        return REFUSAL, False
+
     stop = threading.Event()
     interrupted = threading.Event()
     sentences = []            # cleaned sentences in order (for TTS context)
@@ -1190,6 +1209,11 @@ def cmd_turn(args):
         mic_restore()
         set_state("idle", _last_state.get("text", ""), _last_state.get("reply", ""), _last_speaker)
         resume_media()
+
+
+def say_line(text):
+    """Speak one line without involving the model (used to turn a stranger away)."""
+    cmd_say(argparse.Namespace(text=text))
 
 
 def cmd_say(args):
