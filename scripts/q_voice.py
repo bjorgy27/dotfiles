@@ -108,11 +108,13 @@ TTS = E("Q_TTS", "auto")  # auto | elevenlabs | gateway | piper
 EL_KEY = E("Q_ELEVENLABS_API_KEY") or E("ELEVENLABS_API_KEY") or ""
 EL_VOICE = E("Q_ELEVENLABS_VOICE", "N2lVS1w4EtoT3dr4eOWO")  # Callum: the Q voice (stock ElevenLabs voice)
 EL_MODEL = E("Q_ELEVENLABS_MODEL", "eleven_v3")
-EL_V3 = EL_MODEL.startswith("eleven_v3")         # v3: audio tags, no previous/next_text, no optimize_streaming_latency
+EL_V3 = EL_MODEL.startswith(("eleven_v3", "eleven_v4"))  # v3/v4: audio tags, no previous/next_text, no optimize_streaming_latency
 # v3 stability is a 3-way switch (0.0 creative / 0.5 natural / 1.0 robust); natural keeps tags responsive without
 # creative's hallucinations and ~3x slower first byte
-EL_SETTINGS = {"stability": float(E("Q_ELEVENLABS_STABILITY", "0.5" if EL_V3 else "0.45")), "similarity_boost": 0.8,
-               "style": 0.3, "use_speaker_boost": True, "speed": float(E("Q_ELEVENLABS_SPEED", "0.95"))}
+EL_SETTINGS = {"stability": float(E("Q_ELEVENLABS_STABILITY", "0.5" if EL_V3 else "0.45")),
+               "similarity_boost": float(E("Q_ELEVENLABS_SIMILARITY", "0.8")),
+               "style": float(E("Q_ELEVENLABS_STYLE", "0.3")), "use_speaker_boost": True,
+               "speed": float(E("Q_ELEVENLABS_SPEED", "0.95"))}
 SSH_HOST = E("Q_GATEWAY_SSH", "")                 # ssh host running openclaw; required for the gateway TTS relay
 GATEWAY_CLI = E("Q_GATEWAY_CLI", "openclaw")      # openclaw binary on that host
 PIPER_VOICE = E("Q_PIPER_VOICE", f"{HOME}/.local/share/piper/en_US-lessac-medium.onnx")
