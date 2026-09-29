@@ -251,6 +251,45 @@ def strip_tags(s):
     return re.sub(r" {2,}", " ", _TAG.sub("", s)).strip()
 
 
+# ---------------------------------------------------------------- earcons
+# Two short blips so you never have to watch the bar: a rising pair when the mic opens
+# (your turn), a single lower note when the turn is closed and the answer is being made.
+CHIME = E("Q_CHIME", "1") == "1"
+CHIME_GAIN = float(E("Q_CHIME_GAIN", "0.18"))
+
+
+def _blip(notes):
+    """notes = [(freq_hz, ms), ...] -> s16 mono PCM at PCM_RATE, each note fading in/out."""
+    out = []
+    for freq, ms in notes:
+        n = int(PCM_RATE * ms / 1000)
+        t = np.arange(n, dtype=np.float32) / PCM_RATE
+        env = np.minimum(1.0, np.minimum(np.arange(n), n - np.arange(n)) / (0.012 * PCM_RATE)).astype(np.float32)
+        out.append(np.sin(2 * np.pi * freq * t).astype(np.float32) * env * CHIME_GAIN)
+        out.append(np.zeros(int(PCM_RATE * 0.02), dtype=np.float32))
+    return (np.concatenate(out) * 32767).astype(np.int16).tobytes()
+
+
+_CHIMES = {"start": [(784.0, 70), (1046.5, 90)],   # G5 -> C6, "go ahead"
+           "stop": [(659.3, 110)]}                  # E5, "got it"
+
+
+def chime(kind, wait=False):
+    """Play an earcon. `wait` blocks until it finishes, so the mic never hears it."""
+    if not CHIME or MUTE:
+        return
+    try:
+        p = subprocess.Popen(
+            ["pw-play", "--rate", str(PCM_RATE), "--channels", "1", "--format", "s16", "--raw", "-"],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        p.stdin.write(_blip(_CHIMES[kind]))
+        p.stdin.close()
+        if wait:
+            p.wait(timeout=2)
+    except Exception as e:  # noqa - a missing sink must never break a turn
+        dbg(f"chime failed: {e}")
+
+
 # ---------------------------------------------------------------- signals
 class Ctl:
     """Shared control flags. toggle = SUGUSR1 seen; cancel = SIGTERM seen."""
@@ -328,6 +367,7 @@ def listen(start_timeout, hint):
     preroll = collections.deque(maxlen=12)  # ~380 ms before speech start
     vad = get_vad()
     Ctl.toggle.clear()
+    chime("start", wait=True)   # blocking: the blip must finish before the mic opens
     rec = subprocess.Popen(
         ["pw-record", "--rate", str(SR), "--channels", "1", "--format", "s16", "--raw", "--latency", "20ms", "-"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0,
@@ -401,6 +441,7 @@ def listen(start_timeout, hint):
     pcm = b"".join(frames)
     if len(pcm) < SR * 2 * 0.3:
         return None
+    chime("stop")               # turn closed: stop talking, the answer is coming
     bio = io.BytesIO()
     with wave.open(bio, "wb") as w:
         w.setnchannels(1)
