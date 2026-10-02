@@ -1155,11 +1155,43 @@ def mic_restore():
     _mic_was_muted = None
 
 
+RESET_WORDS = ("/new", "/reset", "/clear")
+
+
+def reset_session():
+    """Typed /new from the panel. The gateway treats slash commands on /v1/chat/completions as plain text, so reset
+    the session over /tools/invoke instead (model and thinking pins survive), and start the panel log afresh."""
+    key = f"agent:{AGENT}:openai-user:{USER}".lower()
+    try:
+        r = SESSION.post(f"{GATEWAY_URL}/tools/invoke", headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
+                         json={"tool": "sessions", "args": {"action": "reset", "sessionKey": key}}, timeout=30)
+        body = r.json()
+        inner = json.loads(body["result"]["content"][0]["text"]) if body.get("ok") else {}
+        if not inner.get("ok"):
+            raise RuntimeError(inner.get("error") or body.get("error") or f"HTTP {r.status_code}")
+    except Exception as e:  # noqa
+        log(f"RESET failed: {e}")
+        emit({"type": "error", "message": f"reset failed: {e}"})
+        return
+    log("RESET: fresh session")
+    reply = "Fresh session. I remember nothing, which I assure you is a first."
+    try:
+        if os.path.exists(CHATF):
+            os.replace(CHATF, CHATF + ".prev")   # one generation kept, in case the wipe was a slip
+    except OSError:
+        pass
+    remember("q", reply)
+    emit({"type": "done", "reply": reply})
+
+
 def cmd_turn(args):
     pause_media()
     if args.listen:
         mic_open()
     try:
+        if args.text and args.text.strip().lower() in RESET_WORDS:
+            reset_session()
+            return
         if args.text:
             run_turn(args.text)
             return
