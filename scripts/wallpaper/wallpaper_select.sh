@@ -366,6 +366,8 @@ fi
 [[ $mode == apply ]] || exit 0
 
 printf '%s\n' "$selection" >"$SAVE_FILE"
+# Repoint hyprlock's background at it (a symlink swap, no image work).
+"$CONFIG_HOME/scripts/lock/wallpaper.sh" >/dev/null 2>&1 || true
 
 # Keep things warm for next time (cheap no-op when they already are).
 flock -u 9
