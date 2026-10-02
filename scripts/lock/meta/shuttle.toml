@@ -1,0 +1,28 @@
+# Beck's shuttle.jpg: Earth's limb on a diagonal, the orbiter's silhouette in
+# the bright band, black space bottom-left, deep blue to black on the right.
+# Everything sits in the dark right-hand column, clear of the limb and the
+# orbiter; the accent picks up the orange of the limb.
+base = "right"
+
+[text]
+color = "rgb(cdd6f4)"
+accent = "rgb(fab387)"
+font_weight = "regular"
+
+[clock]
+font_weight = "extralight"
+font_size = 130
+valign = "top"
+position = "-5%, -9%"
+
+[date]
+color = "rgb(fab387)"
+opacity = 0.9
+font_weight = "semibold"
+letter_spacing = 4
+
+[input]
+valign = "bottom"
+position = "-5%, 10%"
+outer_color = "rgba(cdd6f440)"
+inner_color = "rgba(11111b80)"

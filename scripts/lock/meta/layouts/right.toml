@@ -1,0 +1,15 @@
+# Everything in one right-aligned column near the right edge, for wallpapers
+# whose subject is elsewhere. Use with base = "right". The date hangs under
+# the clock and the greeting over the field (meta/default.toml), so only the
+# two anchors move. x is negative: +x is to the right, off the edge (upstream
+# had +5%, which pushed the column off screen).
+
+[text]
+halign = "right"
+
+[clock]
+position = "-5%, 14%"
+
+[input]
+halign = "right"
+position = "-5%, -22%"

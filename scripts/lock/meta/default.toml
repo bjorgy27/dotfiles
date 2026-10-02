@@ -1,0 +1,119 @@
+# Lock screen layout every wallpaper starts from. A wallpaper's own
+# meta/<stem>.toml (stem = its file name without the extension) only lists
+# what it changes; a wallpaper without one gets exactly this. See ../README.md.
+#
+# Positions are "x%, y%" of the monitor (or px), offset from the halign/valign
+# anchor, +y up, so one layout fits both monitors. Alignment is by the text's
+# ink (glyph edges x cap height), so different fonts/sizes share an edge.
+# Sizes are px (font_size in points at 96 dpi, or "N%" of the screen height),
+# designed for a 1440px-tall screen and scaled on others ([text] ui_scale = N
+# pins it). Colours: rgb(rrggbb) / rgba(rrggbbaa) / "#rrggbb".
+# Any element can be hidden with show = false.
+#
+# Per element, besides position:
+#   below / above = "clock"   hang off another element (clock, date, greeting,
+#                             input), `gap` px (or "N%") from its box, aligned
+#                             to its edge by this element's halign; `offset`
+#                             nudges. Set below = "" to place it freely again.
+#   relative_to = "subject"   anchor to the wallpaper subject's box ([depth]
+#                             foreground) instead of the screen
+#   depth = "front"|"behind"|"far"   plane (needs [depth]): behind = under the
+#                             subject, far = also under the midground
+#
+# [depth] (stills only; masks in meta/<stem>/, made by scripts/lock/masks.py)
+#   foreground = "fg-mask.png"        white = the subject, drawn over depth="behind" text
+#   background = "bg-mask.png"        white = the far plane (sky); everything else
+#                                     is drawn over depth="far" text
+#   edge_softness = 1.0               width (screen px) of the cut-outs' antialiased
+#                                     edge; lockgen redraws the mask edge this wide at
+#                                     each monitor's size. 0.6 = razor, 2-3 = soft,
+#                                     0 = the mask exactly as stored (old look)
+#   holes = true                      masks.py only: also clear see-through gaps
+#                                     (lattices, missing panels) from the subject mask
+
+[depth]
+edge_softness = 1.0
+
+[background]
+color = "rgb(1b1923)"       # shown when there is no image/scene, and under it
+brightness = 0.85           # stills only (1 = as is)
+blur_passes = 0             # stills only: blur = passes * size
+blur_size = 6
+# image = "poster.png"      # use this still (in meta/<stem>/, or absolute) instead
+
+# ---- TEXT STYLE: fallback only; each wallpaper's toml sets its own look ------
+# Applies to clock, date, greeting AND the password field (its dots/text); any
+# element overrides these in its own table (font_family, font_weight, font_size,
+# letter_spacing, uppercase, font_style, color, opacity, shadow_strength).
+#   color        text colour (also the password field's font_color)
+#   font_family  any installed family
+#   font_weight  thin extralight light regular medium semibold bold extrabold
+#                black (or 100-1000)
+#   font_style   normal | italic
+[text]
+color = "rgb(cdd6f4)"      # Catppuccin Mocha text
+font_family = "Adwaita Sans"   # Inter-based; upstream's Inter Display isn't installed here
+font_weight = "medium"
+font_style = "normal"
+shadow_passes = 2           # 0 = no text shadow
+shadow_size = 4
+shadow_color = "rgba(11111bcc)"
+halign = "center"
+valign = "center"
+
+# Two groups: the clock with the date under it, and the field with the
+# greeting over it. Move a group by its anchor (clock / input position).
+[clock]
+font_weight = "extralight"
+format = "HH:mm"            # Qt date format (HH:mm, h:mm AP, ...)
+font_size = 110
+position = "0, 14%"
+
+[date]
+font_weight = "medium"
+opacity = 0.75             # softer than the clock (keeps any [text] colour)
+format = "dddd, MMMM d"
+uppercase = true
+letter_spacing = 3
+font_size = 15
+below = "clock"
+gap = 26
+
+[greeting]
+show = true
+opacity = 0.75
+font_weight = "regular"
+text = "good {period}, {user}"   # {period}: morning/afternoon/evening
+font_size = 16
+above = "input"
+gap = 22
+
+[input]
+size = [340, 58]
+position = "0, -22%"
+halign = "center"
+valign = "center"
+glass = true                # faux glass sheen on the field (no blur)
+highlight_color = "#24ffffff"   # top sheen
+outline_thickness = 1.5
+rounding = 29               # corner radius, px
+outer_color = "rgba(cdd6f440)"   # idle outline
+inner_color = "rgba(11111b59)"   # fill
+accent_color = "rgb(b4befe)"     # outline while typing (Mocha lavender)
+check_color = "rgb(f9e2af)"      # while PAM checks (yellow)
+fail_color = "rgb(f38ba8)"       # after a wrong password (red)
+success_color = "rgb(a6e3a1)"    # on unlock (green)
+caps_color = "rgb(fab387)"       # caps lock warning (peach)
+fail_text = "wrong password"
+dots_size = 0.22            # dot diameter, fraction of the field height
+dots_spacing = 0.9          # gap, fraction of the dot diameter
+# font_color, font_family, font_weight come from [text] unless set here
+fade_on_empty = false
+hide_input = false          # true: show nothing while typing
+placeholder_text = "Password"
+
+# Per-monitor overrides go under [monitor."<name>".<element>], e.g.
+# [monitor."DP-2".clock]
+# position = "0, 25%"
+# Monitor names differ between the desktop and the laptop (this repo syncs to
+# both), so prefer layouts that work on any screen over per-monitor overrides.

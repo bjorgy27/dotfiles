@@ -1,0 +1,14 @@
+# Everything in one left-aligned column near the left edge, for wallpapers
+# whose subject is elsewhere. Use with base = "left". The date hangs under
+# the clock and the greeting over the field (meta/default.toml), so only the
+# two anchors move.
+
+[text]
+halign = "left"
+
+[clock]
+position = "5%, 14%"
+
+[input]
+halign = "left"
+position = "5%, -22%"

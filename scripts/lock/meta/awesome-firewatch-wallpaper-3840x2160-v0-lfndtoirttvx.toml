@@ -1,0 +1,26 @@
+# Firewatch: the lookout tower in front of the moon, sky darkest at the top,
+# the forest a near-black band across the bottom third. The clock goes up in
+# the dark sky, clear of the peaks; the field sits down in the trees.
+# The source is only 1080px wide, so it is upscaled; a little dimming hides it.
+
+[background]
+brightness = 0.8
+
+[text]
+color = "rgb(cdd6f4)"
+accent = "rgb(f9e2af)"      # the tower's lit windows
+
+[clock]
+font_weight = "light"
+font_size = 120
+valign = "top"
+position = "0, -7%"
+
+[date]
+color = "rgb(89dceb)"
+opacity = 0.85
+
+[input]
+valign = "bottom"
+position = "0, 12%"
+inner_color = "rgba(11111b99)"
