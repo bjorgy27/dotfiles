@@ -2,6 +2,7 @@
 text/plain=org.gnome.TextEditor.desktop;kitty.desktop;
 video/mp4=firefox.desktop;
 application/vnd.openxmlformats-officedocument.presentationml.presentation=firefox.desktop;
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=firefox.desktop;
 
 [Default Applications]
 text/plain=org.gnome.TextEditor.desktop
