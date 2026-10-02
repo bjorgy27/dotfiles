@@ -612,7 +612,9 @@ Item {
     id: worldSource
     width: 0
     height: 0
-    sourceItem: worldStack
+    // Detached while flat: at street zooms the world square outgrows the GPU's
+    // max texture size and the layer warns on every pan.
+    sourceItem: map.useTexture ? worldStack : null
     sourceRect: map.worldRect
     live: map.useTexture
     hideSource: map.useTexture
