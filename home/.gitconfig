@@ -4,3 +4,5 @@
 [include]
 	# machine-only settings (e.g. http.version on the laptop)
 	path = ~/.gitconfig.local
+[credential]
+	helper = store
