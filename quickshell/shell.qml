@@ -1114,6 +1114,9 @@ Scope {
             font.pixelSize: metrics.isVertical ? metrics.fontSmall : metrics.fontNormal
             font.family: "Noto Sans"
             font.bold: true
+            // Lining, equal-width digits: display fonts like Playfair and Cormorant
+            // default to old-style figures, and proportional ones jiggle the bar each second.
+            font.features: { "lnum": 1, "tnum": 1 }
 
             function updateTime() {
               text = Qt.formatDateTime(new Date(), metrics.isVertical ? "hh\nmm" : "hh:mm:ss")
