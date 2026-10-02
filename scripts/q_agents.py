@@ -14,6 +14,11 @@ junk-returning openclaw leaves the previous file untouched.
   q_agents.py                 poll forever (installed as q-agents.service)
   q_agents.py --once          one pass, then exit
   q_agents.py --interval 5    poll every 5s instead of 2s
+
+Only the machine running the gateway has the openclaw CLI. Q_AGENTS_MIRROR, if
+set, is a shell command that gets each new agents.json on stdin, run off the
+poll loop and retried until it succeeds, so a machine without openclaw (the
+laptop) can be fed over SSH from this one; see scripts/q_agents_recv.sh.
 """
 
 import argparse
@@ -22,9 +27,14 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 POLL_TIMEOUT = 25          # openclaw is a node CLI; a cold start is not instant
+MIRROR = os.environ.get("Q_AGENTS_MIRROR", "")
+MIRROR_TIMEOUT = 15
+MIRROR_RETRY = 30          # seconds between attempts while the other machine is away
+MIRROR_REFRESH = 300       # resend unchanged content this often
 MAX_AGE_MS = 24 * 60 * 60 * 1000
 MAX_ENTRIES = 50
 
@@ -156,6 +166,50 @@ def write_if_changed(path, text):
     os.replace(tmp, path)
 
 
+class Mirror(threading.Thread):
+    """Sends the latest agents.json through Q_AGENTS_MIRROR, never blocking the poll.
+
+    Only the newest content matters, so a pending send is simply replaced."""
+
+    def __init__(self, cmd):
+        super().__init__(daemon=True)
+        self.cmd = cmd
+        self.cond = threading.Condition()
+        self.pending = None
+        self.failing = False
+
+    def push(self, text):
+        with self.cond:
+            self.pending = text
+            self.cond.notify()
+
+    def run(self):
+        while True:
+            with self.cond:
+                while self.pending is None:
+                    self.cond.wait()
+                text = self.pending
+            try:
+                proc = subprocess.run(self.cmd, shell=True, input=text, text=True,
+                                      capture_output=True, timeout=MIRROR_TIMEOUT)
+                ok = proc.returncode == 0
+                err = "exit %d: %s" % (proc.returncode, (proc.stderr or "").strip()[:200])
+            except subprocess.TimeoutExpired:
+                ok, err = False, "timed out after %ds" % MIRROR_TIMEOUT
+            with self.cond:
+                if ok:
+                    if self.pending == text:
+                        self.pending = None
+                    if self.failing:
+                        log("mirror recovered")
+                        self.failing = False
+                    continue
+                if not self.failing:
+                    log("mirror failed (%s), retrying every %ds" % (err, MIRROR_RETRY))
+                    self.failing = True
+                self.cond.wait(MIRROR_RETRY)
+
+
 def main():
     ap = argparse.ArgumentParser(description="write the Q panel's background-agent list")
     ap.add_argument("--once", action="store_true", help="single pass, then exit")
@@ -173,6 +227,14 @@ def main():
     except OSError:
         last = None
 
+    mirror = None
+    if MIRROR and not args.once:
+        mirror = Mirror(MIRROR)
+        mirror.start()
+        if last is not None:
+            mirror.push(last)
+    pushed = time.monotonic()
+
     failing = False
     while True:
         try:
@@ -182,6 +244,12 @@ def main():
             if text != last:
                 write_if_changed(path, text)
                 last = text
+                if mirror:
+                    mirror.push(text)
+                    pushed = time.monotonic()
+            elif mirror and time.monotonic() - pushed > MIRROR_REFRESH:
+                mirror.push(text)   # the other machine may have rebooted and lost its copy
+                pushed = time.monotonic()
             if failing:
                 log("openclaw recovered, %d agents" % len(agents))
                 failing = False
