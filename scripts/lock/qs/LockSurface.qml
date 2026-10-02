@@ -324,6 +324,10 @@ FocusScope {
       readonly property real gap: dot * (cfg.dots_spacing ?? 0.9)
       readonly property real radius: Math.min(cfg.rounding !== undefined ? cfg.rounding * surface.s : height / 2, height / 2)
       readonly property bool glass: cfg.glass !== false
+      // style = "line": no box, just a thin state-coloured rule under the
+      // entry, with the dots and placeholder aligned to the field's halign.
+      readonly property bool line: cfg.style === "line"
+      readonly property string align: line ? (cfg.halign ?? "center") : "center"
 
       // wrong password: shake
       property real shake: 0
@@ -344,6 +348,7 @@ FocusScope {
       Rectangle {
         id: box
         anchors.fill: parent
+        visible: !field.line
         radius: field.radius
         color: field.cfg.inner_color ?? "#5511111b"
         border.width: Math.max(1, (field.cfg.outline_thickness ?? 1.5) * surface.s)
@@ -354,18 +359,40 @@ FocusScope {
         anchors.fill: parent
         anchors.margins: 1
         radius: Math.max(0, field.radius - 1)
-        visible: field.glass
+        visible: field.glass && !field.line
         gradient: Gradient {
           GradientStop { position: 0; color: field.cfg.highlight_color ?? "#24ffffff" }
           GradientStop { position: 0.55; color: "#00ffffff" }
         }
       }
 
+      // line style: a faint full-width rule, and a brighter one in the state
+      // colour that sweeps out from the aligned edge as you type
+      Rectangle {
+        visible: field.line
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        height: Math.max(1, (field.cfg.outline_thickness ?? 1) * surface.s)
+        color: field.cfg.outer_color ?? "#40cdd6f4"
+      }
+      Rectangle {
+        id: rule
+        visible: field.line
+        readonly property bool lit: !field.empty || field.checking || field.failed || field.ok
+        anchors.bottom: parent.bottom
+        height: Math.max(1, (field.cfg.outline_thickness ?? 1) * 1.5 * surface.s)
+        width: lit ? field.width : 0
+        x: field.align === "right" ? field.width - width
+         : field.align === "left" ? 0 : (field.width - width) / 2
+        color: field.ring
+        Behavior on width { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+        Behavior on color { ColorAnimation { duration: 180 } }
+      }
+
       Item {
         id: inner
         anchors.fill: parent
-        anchors.leftMargin: field.height * 0.6
-        anchors.rightMargin: field.height * 0.6
+        anchors.leftMargin: field.line ? 0 : field.height * 0.6
+        anchors.rightMargin: field.line ? 0 : field.height * 0.6
         clip: true
 
         // Dots. `shown` eases toward the real length, and every dot sits at
@@ -377,7 +404,10 @@ FocusScope {
         Behavior on shown { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
         readonly property real pitch: field.dot + field.gap
         readonly property real total: Math.max(0, shown * pitch - field.gap)
-        readonly property real x0: total <= width ? (width - total) / 2 : width - total
+        readonly property real x0: total > width ? width - total
+                                 : field.align === "left" ? 0
+                                 : field.align === "right" ? width - total
+                                 : (width - total) / 2
         property int peak: 0
         Connections {
           target: shell
@@ -425,7 +455,8 @@ FocusScope {
           }
         }
         Text {
-          anchors.centerIn: parent
+          anchors.verticalCenter: parent.verticalCenter
+          x: field.align === "left" ? 0 : field.align === "right" ? parent.width - width : (parent.width - width) / 2
           visible: opacity > 0
           opacity: field.empty && !field.checking && !field.failed && !field.ok && text !== "" ? 1 : 0
           Behavior on opacity { NumberAnimation { duration: field.empty ? 240 : 70 } }
@@ -442,7 +473,8 @@ FocusScope {
       // status line under the field: wrong password / caps lock
       Text {
         id: hint
-        anchors { top: parent.bottom; topMargin: field.height * 0.3; horizontalCenter: parent.horizontalCenter }
+        anchors { top: parent.bottom; topMargin: field.height * 0.3 }
+        x: field.align === "left" ? 0 : field.align === "right" ? parent.width - width : (parent.width - width) / 2
         readonly property bool caps: shell.capsLock && !field.ok
         text: field.failed ? (field.cfg.fail_text ?? "wrong password") : caps ? "caps lock is on" : ""
         color: field.failed ? (field.cfg.fail_color ?? surface.cRed) : (field.cfg.caps_color ?? surface.cPeach)

@@ -89,11 +89,13 @@ above = "input"
 gap = 22
 
 [input]
-size = [340, 58]
+size = [340, 44]
 position = "0, -22%"
 halign = "center"
 valign = "center"
-glass = true                # faux glass sheen on the field (no blur)
+style = "line"              # "line": just a rule under the entry, aligned to
+                            # halign; anything else: the rounded glass box
+glass = true                # box style only: faux glass sheen (no blur)
 highlight_color = "#24ffffff"   # top sheen
 outline_thickness = 1.5
 rounding = 29               # corner radius, px

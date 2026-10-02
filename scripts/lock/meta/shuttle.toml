@@ -2,7 +2,7 @@
 # the bright band, black space bottom-left, deep blue to black on the right.
 # Everything sits in the dark right-hand column, clear of the limb and the
 # orbiter; the accent picks up the orange of the limb.
-base = "right"
+base = "left"
 
 [text]
 color = "rgb(cdd6f4)"
@@ -13,7 +13,7 @@ font_weight = "regular"
 font_weight = "extralight"
 font_size = 130
 valign = "top"
-position = "-5%, -9%"
+position = "5%, -9%"
 
 [date]
 color = "rgb(fab387)"
@@ -23,6 +23,6 @@ letter_spacing = 4
 
 [input]
 valign = "bottom"
-position = "-5%, 10%"
+position = "5%, 10%"
 outer_color = "rgba(cdd6f440)"
 inner_color = "rgba(11111b80)"
