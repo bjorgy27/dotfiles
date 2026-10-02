@@ -106,7 +106,7 @@ hl.bind(mainMod .. " + SHIFT + F",    hl.dsp.window.fullscreen({ mode = "maximiz
 hl.bind(mainMod .. " + Q",            hl.dsp.exec_cmd("~/.config/scripts/bar_toggle.sh"))
 hl.bind(mainMod .. " + SHIFT + Q",    hl.dsp.exec_cmd("hyprctl reload"))
 hl.bind(mainMod .. " + SHIFT + E",    hl.dsp.exit())
-hl.bind(mainMod .. " + L",            hl.dsp.exec_cmd("hyprlock"))
+hl.bind(mainMod .. " + L",            hl.dsp.exec_cmd("~/.config/scripts/lock/lock.sh"))  -- Quickshell lock, hyprlock fallback
 
 hl.bind(mainMod .. " + PERIOD",       hl.dsp.focus({ monitor = "+1" }))
 hl.bind(mainMod .. " + COMMA",        hl.dsp.focus({ monitor = "-1" }))

@@ -41,7 +41,8 @@ Item {
             label: "Lock",
             icon: "󰌾",
             color: Theme.colors.blue,
-            command: ["hyprlock"]
+            // through Hyprland like Super+L, so the lock is not a child of the bar
+            command: ["hyprctl", "dispatch", "hl.dsp.exec_cmd(\"~/.config/scripts/lock/lock.sh\")"]
         },
         {
             label: "Logout",
