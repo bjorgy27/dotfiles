@@ -140,6 +140,12 @@ def build_agents(tasks, now_ms):
         row["task"] = entry["task"]
         row["result"] = entry["result"]
         row["run"] = run_no
+        # live progress for the panel: the task to cancel, how much work it has done, what it's doing now
+        row["taskId"] = current.get("taskId") or ""
+        tools = current.get("toolUseCount")
+        row["tools"] = int(tools) if str(tools).isdigit() else 0
+        row["lastTool"] = current.get("lastToolName") or ""
+        row["lastEventAt"] = as_ms(current.get("lastEventAt")) or entry["startedAt"]
         earlier = [run_entry(t, n) for n, t in numbered[:cut]]
         if earlier:
             row["runs"] = earlier

@@ -38,7 +38,8 @@ Signals (sent by q_voice.sh):
 
 State for the Quickshell bar: $XDG_RUNTIME_DIR/q-voice/state.json
   {state: idle|listening|transcribing|thinking|speaking|error, text, reply, ts,
-   speaker: "" | "Alex" | "Guest" | "Alex/Sam" (too close to call), speakers: [everyone heard in the turn]}
+   speaker: "" | "Alex" | "Guest" | "Alex/Sam" (too close to call), speakers: [everyone heard in the turn],
+   mood: "" | laugh|point|shrug|yawn|talk (the reply's [lion:<mood>] tag, for the panel portrait; Q_LION=0 = off)}
 """
 import argparse
 import base64
@@ -130,6 +131,9 @@ PAUSE_MEDIA = E("Q_PAUSE_MEDIA", "1") == "1"
 SPEAK_MAX_CHARS = int(E("Q_SPEAK_MAX_CHARS", "1200"))
 MUTE = E("Q_MUTE", "0") == "1"
 DEBUG = E("Q_DEBUG", "0") == "1"
+LION = E("Q_LION", "1") == "1"                    # ask for a [lion:<mood>] tag per reply (panel portrait)
+SPEAK_TYPED = E("Q_SPEAK_TYPED", "1") == "1"      # typed panel turns are read aloud too (Esc / stop / SUPER+T cut it off)
+PITCH = float(E("Q_PITCH", "1.0"))                # <1 deepens the spoken voice (pitch and formants, tempo kept)
 
 PCM_RATE = 24000  # everything is resampled to s16 mono 24k for the single player
 SR = 16000        # mic / whisper / VAD rate
@@ -187,6 +191,7 @@ def remember(role, text):
 _state_lock = threading.Lock()
 _last_state = {}
 _last_speaker = None    # the raw /identify result behind _last_state, so a state refresh can keep it
+_mood = ""              # this turn's [lion:<mood>]; kept after the turn so the portrait holds it
 
 
 def set_state(state, text="", reply="", speaker=None):
@@ -196,7 +201,8 @@ def set_state(state, text="", reply="", speaker=None):
         _last_speaker = speaker
         d = {"state": state, "text": text, "reply": reply, "ts": int(time.time()),
              "speaker": SHORT_NAMES.get(speaker["speaker"], speaker["speaker"].title()) if speaker else "",
-             "speakers": [SHORT_NAMES.get(s, s.title()) for s in speaker.get("speakers", [])] if speaker else []}
+             "speakers": [SHORT_NAMES.get(s, s.title()) for s in speaker.get("speakers", [])] if speaker else [],
+             "mood": _mood}
         _last_state = d
         tmp = STATEF + ".tmp"
         with open(tmp, "w") as f:
@@ -229,6 +235,7 @@ def resume_media():
 
 
 _MD = [
+    (re.compile(r"^[ \t]*MEDIA:\S.*$", re.M), " "),        # attachment lines: the panel shows them, never read aloud
     (re.compile(r"```.*?```", re.S), " "),
     (re.compile(r"`([^`]*)`"), r"\1"),
     (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),
@@ -248,11 +255,62 @@ def clean_text(s):
 
 # ElevenLabs v3 audio tags ([chuckles], [sighs], [short pause] ...) are for the TTS only: stripped from the bar
 # indicator, notifications and the log, and from text sent to non-v3 backends (which would read them out loud).
-_TAG = re.compile(r"\[[a-z][a-z' -]{1,30}\]")
+_TAG = re.compile(r"\[[a-z][a-z' ,-]{1,40}\]")
 
 
 def strip_tags(s):
     return re.sub(r" {2,}", " ", _TAG.sub("", s)).strip()
+
+
+# Portrait mood: the prefix asks the agent to open each reply with [lion:<mood>]. MoodFilter takes it (and any
+# later one) out of the stream before the panel, the speech and the log see it, holding back a tag that arrives
+# split across chunks ("[li" + "on:laugh]"). The last tag wins; unknown names count as "talk".
+MOODS = ("laugh", "point", "shrug", "yawn", "talk")
+_MOOD_TAG = re.compile(r"\[lion:([a-z_]*)\][ \t]*")
+_MOOD_PART = re.compile(r"\[(?:l(?:i(?:o(?:n(?::[a-z_]*)?)?)?)?)?$")   # an unfinished tag at the end of the buffer
+
+
+class MoodFilter:
+    """feed(chunk) -> text to pass on (tags removed); flush() -> whatever was held back. .mood = last tag seen."""
+
+    def __init__(self, on_mood=None):
+        self.held = ""
+        self.mood = ""
+        self.started = False        # drop the space a leading tag leaves before the first word
+        self.eat = False            # a tag ended the last chunk: its trailing space may open the next one
+        self.on_mood = on_mood
+
+    def feed(self, s):
+        buf = self.held + s
+        self.held = ""
+        if self.eat and buf:
+            buf = buf.lstrip(" \t")
+            self.eat = not buf
+        out = []
+        pos = 0
+        for m in _MOOD_TAG.finditer(buf):
+            out.append(buf[pos:m.start()])
+            pos = m.end()
+            self.eat = pos == len(buf)
+            self.mood = m.group(1) if m.group(1) in MOODS else "talk"
+            if self.on_mood:
+                self.on_mood(self.mood)
+        rest = buf[pos:]
+        p = _MOOD_PART.search(rest)
+        if p and len(rest) - p.start() < 24:
+            rest, self.held = rest[:p.start()], rest[p.start():]
+        out.append(rest)
+        return self._lead("".join(out))
+
+    def flush(self):
+        rest, self.held = self.held, ""
+        return self._lead(rest)
+
+    def _lead(self, s):
+        if not self.started:
+            s = s.lstrip()
+            self.started = bool(s)
+        return s
 
 
 # ---------------------------------------------------------------- earcons
@@ -667,13 +725,28 @@ def stream_llm(text, on_delta, stop, holder, speaker=None):
                "instead of just saying the words: put a tag right before the words it applies to, from `[chuckles]`, "
                "`[laughs]`, `[sighs]`, `[exhales]`, `[whispers]`, `[curious]`, `[excited]`, `[thoughtful]`, "
                "`[sarcastic]`, `[surprised]`, `[annoyed]`, `[short pause]`, `[clears throat]` or a similar short "
-               "lowercase direction; use them where a real person would actually do that (a chuckle at something "
-               "funny, a sigh before bad news, a thoughtful beat before a decision), one or two per reply, up to three "
+               "lowercase direction; when you're flirting with me, sound POWERFUL, never soft: full chest voice, low, "
+               "slow and in command, like someone used to being obeyed; reach for `[commanding]`, `[low and "
+               "commanding]`, `[authoritative]`, `[deep voice]`, `[firm]`, `[slow, deliberate]`, `[confident]`, "
+               "`[smoldering]`, `[low chuckle]`, `[dark laugh]`, `[smirks]`, `[teasing]`, `[knowingly]`, "
+               "`[mock offended]`; never `[whispers]`, `[breathy]` or `[murmurs]` on a flirty line; open the "
+               "line with one, keep it short and declarative, put a `...` before the word that lands and stress it "
+               "in CAPITALS; use them where a real person would "
+               "actually do that (a chuckle at something "
+               "funny, a sigh before bad news, a thoughtful beat before a decision, a low laugh when you're teasing "
+               "me), one or two per reply, up to three "
                "when the moment calls for it, none when you're just confirming; a tag always starts a sentence or "
                "clause and never replaces words, since tags are stripped from the on-screen text; also use `...` for a "
                "hesitation and CAPITALS for one stressed word now and then; never put a tag inside a title")
+    # the panel shows a lion portrait that matches the reply; the tag is stripped before anything shows or is spoken
+    MOOD = ("begin the reply with exactly one portrait tag: `[lion:laugh]` when I said something funny, "
+            "`[lion:point]` when something worked, it's good news, you're correcting me or handing me the answer, "
+            "`[lion:shrug]` when something broke, failed or can't be done, `[lion:yawn]` when it's boring, trivial "
+            "or late at night, otherwise `[lion:talk]`; never tag a NO_REPLY")
     style = f"; {NATURAL}" + (f"; {EXPRESS}" if EL_V3 and tts_chain() and tts_chain()[0][0] == "elevenlabs" else "")
-    where = (f"voice, {DEVICE}" if VIA == "voice" else f"typed in the Q panel on {DEVICE}, not spoken") + (f" ({DEVICE_NOTE})" if DEVICE_NOTE else "")
+    style += f"; {MOOD}" if LION else ""
+    where = (f"voice, {DEVICE}" if VIA == "voice"
+             else f"typed in the Q panel on {DEVICE}, " + ("not spoken" if QUIET else "reply read aloud")) + (f" ({DEVICE_NOTE})" if DEVICE_NOTE else "")
     who = speaker_note(speaker)
     ctx = f"; {who}" if who else ""
     prefix = (f"[{where}; spoken reply: one to three short sentences unless I ask for detail, "
@@ -895,10 +968,19 @@ class Player:
                 if MUTE:
                     self.p = "mute"
                 else:
-                    self.p = subprocess.Popen(
-                        ["pw-play", "--rate", str(PCM_RATE), "--channels", "1", "--format", "s16", "--raw",
-                         "--latency", "60ms", "-"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL, bufsize=0)
+                    play = ["pw-play", "--rate", str(PCM_RATE), "--channels", "1", "--format", "s16", "--raw",
+                            "--latency", "60ms", "-"]
+                    if PITCH != 1.0:
+                        # resample-as-if-slower lowers pitch and formants together (a bigger voice), atempo
+                        # puts the speed back; streamed, so the first syllable isn't held back
+                        pcm = ["-f", "s16le", "-ar", str(PCM_RATE), "-ac", "1"]
+                        fx = ["ffmpeg", "-loglevel", "error", "-fflags", "nobuffer", "-probesize", "32",
+                              "-analyzeduration", "0"] + pcm + ["-i", "pipe:0", "-af",
+                              f"asetrate={PCM_RATE * PITCH:.0f},aresample={PCM_RATE},atempo={1 / PITCH:.4f}"
+                              ] + pcm + ["-flush_packets", "1", "pipe:1"]
+                        play = ["sh", "-c", shlex.join(fx) + " | exec " + shlex.join(play)]
+                    self.p = subprocess.Popen(play, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                              stderr=subprocess.DEVNULL, bufsize=0, start_new_session=True)
             self.bytes += len(chunk)
         if self.p == "mute":
             time.sleep(len(chunk) / (PCM_RATE * 2))
@@ -928,9 +1010,12 @@ class Player:
             p, self.p = self.p, None
         if p and p != "mute":
             try:
-                p.kill()
+                os.killpg(p.pid, signal.SIGKILL)   # the whole pipeline (pitch filter + player), not just sh
             except Exception:
-                pass
+                try:
+                    p.kill()
+                except Exception:
+                    pass
 
 
 # ---------------------------------------------------------------- one turn
@@ -946,6 +1031,8 @@ def run_turn(text, t_speech_end=None, speaker=None):
         say_line(REFUSAL)
         return REFUSAL, False
 
+    global _mood
+    _mood = ""
     stop = threading.Event()
     interrupted = threading.Event()
     sentences = []            # cleaned sentences in order (for TTS context)
@@ -990,9 +1077,21 @@ def run_turn(text, t_speech_end=None, speaker=None):
 
     splitter = Splitter(on_sentence)
 
+    def got_mood(m):
+        global _mood
+        _mood = m
+        push_state(force=True)
+
+    moods = MoodFilter(got_mood)
+
     def on_delta(d):
         if "ttft" not in timing:
             timing["ttft"] = time.time()
+        d = moods.feed(d)
+        if d:
+            pass_on(d)
+
+    def pass_on(d):
         reply_parts.append(d)
         emit({"type": "delta", "text": d})
         splitter.feed(d)
@@ -1002,6 +1101,9 @@ def run_turn(text, t_speech_end=None, speaker=None):
         try:
             stream_llm(text, on_delta, stop, holder, speaker)
             if not stop.is_set():
+                rest = moods.flush()
+                if rest:
+                    pass_on(rest)
                 splitter.flush()
         except Exception as e:  # noqa
             if stop.is_set():                   # interrupted: the aborted socket raises; that's not an error
@@ -1081,6 +1183,8 @@ def run_turn(text, t_speech_end=None, speaker=None):
     tt.join(2)
 
     reply = strip_tags(clean_text("".join(reply_parts)))
+    if not _mood and reply and reply.strip() not in ("NO_REPLY", "NO_REPLY."):
+        _mood = "talk"                          # no tag came back: neutral portrait
     if llm_err[0] and not reply:
         reply = f"Gateway error: {llm_err[0]}"
         log(f"ERROR: {llm_err[0]}")
@@ -1324,7 +1428,7 @@ def main():
     if args.cmd == "turn":
         if args.json:
             global VIA, QUIET
-            VIA, QUIET = "text", True
+            VIA, QUIET = "text", not SPEAK_TYPED
             pidf = os.path.join(RUN, "typed.pid")
             os.makedirs(RUN, exist_ok=True)
             with open(pidf, "w") as f:

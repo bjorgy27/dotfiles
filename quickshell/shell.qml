@@ -442,6 +442,7 @@ Scope {
   property string voiceState: "idle"
   property string voiceText: ""
   property string voiceReply: ""
+  property string voiceMood: ""      // the reply's [lion:<mood>] tag: laugh|point|shrug|yawn|talk (LionAvatar)
   property bool voiceActive: false   // true while a turn is in flight, plus a short linger so the reply stays readable
 
   FileView {
@@ -503,6 +504,7 @@ Scope {
     let prev = root.voiceState
     root.voiceText = s.text ?? ""
     root.voiceReply = s.reply ?? ""
+    root.voiceMood = s.mood ?? ""
     root.voiceState = s.state ?? "idle"
     if (root.voiceState !== "idle") {
       voiceCloseTimer.stop()
@@ -750,8 +752,10 @@ Scope {
           }
         }
       }
+      // input region: the bar, plus the Q chat drawer while it is open
       mask: Region {
         item: bar
+        Region { item: qDrawerHit }
       }
 
       anchors {
@@ -974,14 +978,9 @@ Scope {
               }
             },
             State {
+              // the Q chat is a drawer down the right edge (qDrawer below), so the bar keeps its normal shape
               name: "q_chat"
-              PropertyChanges {
-                target: bar;
-                dropdownWidth: metrics.isVertical ? metrics.longPct(85) : metrics.longPct(34);
-                dropdownHeight: metrics.isVertical ? metrics.crossPct(55) : metrics.crossPct(62);
-                dropdownFilletRadius: metrics.radiusXL;
-                dropdownCornerRadius: metrics.radiusXL;
-              }
+              PropertyChanges { target: bar; dropdownWidth: metrics.longPct(10); dropdownHeight: 0; dropdownFilletRadius: 0; dropdownCornerRadius: 0 }
             },
             State {
               name: "app_selector"
@@ -1461,8 +1460,6 @@ Scope {
 
           PowerMenuWidget {}
 
-          QChatWidget {}
-
           NetworkManagerWidget {}
 
           BluetoothWidget {}
@@ -1538,6 +1535,31 @@ Scope {
               }
             }
           }
+        }
+
+        // Q chat drawer (SUPER+A, bar.state "q_chat"): the old dropdown's width, about half height, centred under the bar, drops down from
+        // above the screen. Part of this window, so it shares the bar's keyboard grab and focused-monitor toggle.
+        Item {
+          id: qDrawer
+          readonly property bool open: bar.state === "q_chat"
+          readonly property real gap: metrics.s(12)
+          readonly property real openX: (parent.width - width) / 2
+          readonly property real openY: (metrics.isVertical ? 0 : bar.barThickness) + gap
+          width: metrics.isVertical ? metrics.longPct(85) : metrics.longPct(34)
+          x: openX
+          height: metrics.isVertical ? metrics.crossPct(55) : metrics.crossPct(55)
+          y: open ? openY : -height - metrics.s(40)
+          visible: y + height > 0
+          Behavior on y { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+
+          QChatWidget { anchors.fill: parent }
+        }
+        // the drawer's input region: its open rectangle, empty while closed
+        Item {
+          id: qDrawerHit
+          x: qDrawer.openX; y: qDrawer.openY
+          width: qDrawer.open ? qDrawer.width : 0
+          height: qDrawer.open ? qDrawer.height : 0
         }
       }
 

@@ -48,6 +48,8 @@ need_conf() {
   return 1
 }
 engine_pid() { local p; p=$(cat "$PIDF" 2>/dev/null) || return 1; kill -0 "$p" 2>/dev/null && echo "$p"; }
+# a typed panel turn (q_voice.py turn --json) that may be reading its reply aloud
+typed_pid() { local p; p=$(cat "$RUN/typed.pid" 2>/dev/null) || return 1; kill -0 "$p" 2>/dev/null && echo "$p"; }
 
 start_engine() {  # background conversational turn
   local flags=(turn --listen); [ "$Q_CONVERSE" = 1 ] && flags+=(--converse)
@@ -108,10 +110,12 @@ status() {
 }
 
 case "${1:-toggle}" in
-  toggle)
+  toggle)  # while a typed reply is being read aloud: cut it off and listen instead (interrupt)
+    if t=$(typed_pid); then kill -TERM "$t"; for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$t" 2>/dev/null || break; sleep 0.1; done; fi
     if p=$(engine_pid); then kill -USR1 "$p"; else need_conf && start_engine; fi ;;
   cancel)
     if p=$(engine_pid); then kill -TERM "$p"; fi
+    if t=$(typed_pid); then kill -TERM "$t"; fi
     rm -f "$PIDF"
     notify-send -r 4242 -a "$Q_NAME" -t 1500 "Cancelled" 2>/dev/null || true ;;
   ask)  shift; [ -n "${*:-}" ] || { echo "usage: $0 ask <text>"; exit 2; }
