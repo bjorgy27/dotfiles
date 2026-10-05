@@ -10,9 +10,9 @@ import "themes"
 //   listening -> default (looking at you)        transcribing / thinking -> default + sweeping ring
 //   reply streaming / speaking -> the mood pose, default for talk or no tag   error -> shrug
 //   after the turn the mood pose stays for restSecs, then back to side_default
-// Only default talks: while Q speaks, its mouth opens through assets/lion/shaders/jaw.frag, a warp of the drawing
-// itself (maps in assets/lion/jaw/): the chin drops, both corners stay joined, the cheeks and muzzle stretch with it.
-// Nothing else moves while talking.
+// Only default talks: while Q speaks, its mouth opens through assets/lion/shaders/mouth.frag, a warp of the drawing
+// itself (maps in assets/lion/jaw/): the chin drops, both corners stay joined, the cheeks and muzzle stretch with it,
+// and the teeth from Beck's front_talk and laugh drawings show inside. Nothing else moves while talking.
 Item {
   id: lion
 
@@ -102,7 +102,11 @@ Item {
   JawMap { id: jawUp; part: "up" }
   JawMap { id: jawShape; part: "shape" }
   JawMap { id: jawMask; part: "mask" }
-  readonly property bool mapsReady: [jawLow, jawUp, jawShape, jawMask].every(m => m.status === Image.Ready)
+  // the teeth, lifted from the drawings and laid along the mouth line: the upper row hangs below it, the lower row
+  // stands above it (4 px per frame px over the effect's teethRect, so mipmapped)
+  JawMap { id: teethUpMap; part: "teeth-up"; mipmap: true }
+  JawMap { id: teethLowMap; part: "teeth-low"; mipmap: true }
+  readonly property bool mapsReady: [jawLow, jawUp, jawShape, jawMask, teethUpMap, teethLowMap].every(m => m.status === Image.Ready)
 
   // ---- crossfade: the new pose fades in over the old one, then the old one goes (on the discs it is already hidden
   // under the new one; the cut-outs differ in outline, so it has to fade from behind too)
@@ -173,7 +177,11 @@ Item {
       readonly property var mapUp: jawUp
       readonly property var mapShape: jawShape
       readonly property var mapMask: jawMask
-      fragmentShader: Qt.resolvedUrl("assets/lion/shaders/jaw.frag.qsb")
+      readonly property vector4d teethRect: Qt.vector4d(212, 222, 136, 92)          // from the teeth maps' build
+      readonly property vector2d drop: Qt.vector2d(-0.3162, 0.9487)
+      readonly property var teethUp: teethUpMap
+      readonly property var teethLow: teethLowMap
+      fragmentShader: Qt.resolvedUrl("assets/lion/shaders/mouth.frag.qsb")
     }
   }
 
