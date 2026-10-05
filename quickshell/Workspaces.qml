@@ -65,7 +65,7 @@ Item {
 
         color: {
           let base
-          if (isActive && hasWindows) base = Theme.colors.blue
+          if (isActive && hasWindows) base = Theme.colors.accent
           else if (isActive) base = Theme.colors.indigo
           else if (hasWindows) base = Theme.colors.lavender
           else base = Theme.colors.border

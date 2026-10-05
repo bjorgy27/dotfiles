@@ -442,7 +442,11 @@ Scope {
   property string voiceState: "idle"
   property string voiceText: ""
   property string voiceReply: ""
-  property string voiceMood: ""      // the reply's [lion:<mood>] tag: laugh|point|shrug|yawn|talk (LionAvatar)
+  property string voiceMood: ""      // the reply's [lion:<mood>] tag, see MOODS in q_voice.py (LionAvatar)
+  // the corner lion: click the chat panel's portrait to show Q large in the bottom right of that screen; it stays
+  // after the panel closes until the portrait is clicked again
+  property bool qCorner: false
+  property string qCornerScreen: ""
   property bool voiceActive: false   // true while a turn is in flight, plus a short linger so the reply stays readable
 
   FileView {
@@ -724,9 +728,10 @@ Scope {
       // they grab exclusively. The wallpaper selector is mouse-navigable, so it uses
       // OnDemand — an Exclusive grab is global and blocks clicks on other monitors.
       // Its arrow keys arrive via root's shared HyprlandFocusGrab instead.
-      WlrLayershell.keyboardFocus: (bar.state === "app_selector" || bar.state === "power_menu" || bar.state === "q_chat" || bar.state === "network" || bar.state === "bluetooth" || bar.state === "radar_settings")
+      // The Q chat is OnDemand too, so the windows under it stay usable while it is open (click the panel to type).
+      WlrLayershell.keyboardFocus: (bar.state === "app_selector" || bar.state === "power_menu" || bar.state === "network" || bar.state === "bluetooth" || bar.state === "radar_settings")
             ? WlrKeyboardFocus.Exclusive
-            : (bar.state === "wallpaper_selector")
+            : (bar.state === "wallpaper_selector" || bar.state === "q_chat")
             ? WlrKeyboardFocus.OnDemand
             : WlrKeyboardFocus.None
 
@@ -770,27 +775,30 @@ Scope {
         anchors.fill: parent
 
         // Low battery popup warning
-        Rectangle {
+        Item {
           id: lowBatteryPopup
           visible: false
           opacity: 0
-          
+
           width: metrics.s(400)
           height: metrics.s(120)
-          radius: metrics.radiusXL
-          color: Theme.colors.background
-          border.color: Theme.colors.red
-          border.width: 2
 
           anchors {
             horizontalCenter: parent.horizontalCenter
             top: parent.top
             topMargin: metrics.s(80)
           }
-          
+
           layer.enabled: true
           layer.samples: 4
-          
+
+          GalaxySky {
+            anchors.fill: parent
+            radius: metrics.radiusXL
+            borderColor: Theme.colors.red
+            borderWidth: Theme.colors.nebula ? 1 : 2
+          }
+
           ColumnLayout {
             anchors.centerIn: parent
             spacing: metrics.spacingNormal
@@ -802,15 +810,12 @@ Scope {
               font.family: "monospace"
               Layout.alignment: Qt.AlignHCenter
             }
-            
-            Text {
+
+            QHeading {
               text: "Low Battery Warning"
-              color: Theme.colors.textPrimary
-              font.pixelSize: metrics.fontLarge
-              font.bold: true
               Layout.alignment: Qt.AlignHCenter
             }
-            
+
             Text {
               text: "Battery at " + root.batteryPercent + "% — Please plug in charger"
               color: Theme.colors.textSecondary
@@ -896,7 +901,8 @@ Scope {
           property int appSelectorRowsPerPage: 5
 
           ShapePath {
-            fillColor: Theme.colors.panelDeep
+            // deep space under Q Galaxy; a flat theme's stops are all panelDeep
+            fillGradient: SkyGradient { vertical: metrics.isVertical; depth: metrics.crossPct(45) }
             strokeColor: "transparent"
 
             startX: 0; startY: 0
@@ -1041,6 +1047,14 @@ Scope {
           ]
         }
 
+        // Nebula glow inside the open dropdown and the gold hairline under the bar (templates/GalaxyPocket.qml)
+        GalaxyPocket {
+          target: bar
+          vertical: metrics.isVertical
+          width: bar.width
+          height: bar.height
+        }
+
         // Container for all the bar-exclusive widgets. Horizontal: full-width strip
         // of barThickness. Vertical: full-height strip of barThickness down the left.
         Item {
@@ -1109,10 +1123,11 @@ Scope {
               bottomMargin: metrics.isVertical ? metrics.marginEdge : 0
             }
 
-            color: Theme.colors.textPrimary
+            color: Theme.colors.heading
             font.pixelSize: metrics.isVertical ? metrics.fontSmall : metrics.fontNormal
             font.family: "Noto Sans"
             font.bold: true
+            font.letterSpacing: metrics.s(Theme.colors.headingSpacing) / 2
             // Lining, equal-width digits: display fonts like Playfair and Cormorant
             // default to old-style figures, and proportional ones jiggle the bar each second.
             font.features: { "lnum": 1, "tnum": 1 }
@@ -1567,6 +1582,33 @@ Scope {
         source: main
         anchors.fill: main
         shadowEnabled: true
+      }
+
+      // the corner lion (root.qCorner): Q large in the bottom right of this screen, cut out on transparent with no
+      // backdrop and no ring (LionAvatar framed: false); clicks pass through. The cut-outs run on past the avatar's
+      // square to the left and above (up to about a quarter of its width), so the window leaves room for them
+      Scope {
+        PanelWindow {
+          screen: barWindow.modelData
+          visible: root.voiceEnabled && root.qCorner && root.qCornerScreen === barWindow.modelData.name
+          color: "transparent"
+          exclusionMode: ExclusionMode.Ignore
+          WlrLayershell.layer: WlrLayer.Top
+          WlrLayershell.namespace: "q-corner"
+          WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+          anchors.bottom: true
+          anchors.right: true
+          implicitWidth: Math.ceil(cornerLion.width * 1.3)
+          implicitHeight: Math.ceil(cornerLion.height * 1.08)
+          mask: Region {}
+          LionAvatar {
+            id: cornerLion
+            framed: false
+            width: Math.round(metrics.crossPct(30))
+            height: width
+            anchors.right: parent.right; anchors.bottom: parent.bottom
+          }
+        }
       }
 
       // Exclusion zone (per-screen): reserve the top edge (horizontal) or the

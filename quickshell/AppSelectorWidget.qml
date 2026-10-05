@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import Quickshell
 import QtQml.Models
 import "themes"
+import "templates"
 
 Item {
     id: appSelectorWidget
@@ -81,7 +82,7 @@ Item {
     // Background
     Rectangle {
         anchors.fill: parent
-        color: Theme.colors.panel
+        color: Theme.colors.surface
         radius: metrics.radiusLarge
     }
 
@@ -92,15 +93,18 @@ Item {
         y: metrics.marginBar
         width: parent.width - metrics.s(30)
         height: appSelectorWidget.searchBarHeight
-        color: Theme.colors.inset
-        radius: metrics.radiusNormal
+        color: Theme.colors.field
+        radius: Theme.colors.nebula ? height / 2 : metrics.radiusNormal
+        border.width: 1
+        border.color: searchBox.activeFocus ? Theme.colors.fieldFocus : Theme.colors.fieldBorder
+        Behavior on border.color { ColorAnimation { duration: 200 } }
 
         Text {
             id: searchIcon
             x: metrics.s(12)
             anchors.verticalCenter: parent.verticalCenter
             text: "󰍉"
-            color: Theme.colors.blue
+            color: Theme.colors.accent
             font.pixelSize: metrics.fontNormal
             font.family: "monospace"
         }
@@ -164,12 +168,11 @@ Item {
     }
 
     // Separator
-    Rectangle {
+    QRule {
         x: appSelectorWidget.edgePadding
         y: appSelectorWidget.separatorY
         width: parent.width - (appSelectorWidget.edgePadding*2)
-        height: metrics.s(2)
-        color: Theme.colors.border
+        height: Theme.colors.ruleFades ? 1 : metrics.s(2)
     }
 
     // Grid
@@ -206,8 +209,8 @@ Item {
         highlight: Rectangle {
             color: Theme.colors.inset
             radius: metrics.radiusNormal
-            border.width: 2
-            border.color: Theme.colors.blue
+            border.width: Theme.colors.nebula ? 1 : 2
+            border.color: Theme.colors.accent
         }
         highlightFollowsCurrentItem: true
 
@@ -249,7 +252,7 @@ Item {
 
                 Text {
                     text: appData.name
-                    color: Theme.colors.textPrimary
+                    color: isSelected || !Theme.colors.nebula ? Theme.colors.textPrimary : Theme.colors.textSecondary
                     font.pixelSize: metrics.fontTiny
                     font.bold: isSelected
                     font.family: "monospace"

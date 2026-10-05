@@ -16,10 +16,8 @@ Item {
   property Component middleContent: null
   property Component footerContent: null
 
-  Rectangle {
+  QCard {
     anchors.fill: parent
-    color: Theme.colors.panel
-    radius: metrics.radiusLarge
 
     ColumnLayout {
       anchors {
@@ -29,21 +27,16 @@ Item {
       spacing: metrics.spacingSmall
 
       // Title
-      Text {
+      QHeading {
         text: root.title
-        color: Theme.colors.textPrimary
         font.pixelSize: metrics.fontLarge
-        font.bold: true
-        font.family: "monospace"
         Layout.fillWidth: true
-        elide: Text.ElideRight
       }
 
       // Separator
-      Rectangle {
+      QRule {
         Layout.fillWidth: true
-        height: bar.dividerThickness
-        color: Theme.colors.border
+        implicitHeight: bar.dividerThickness
       }
 
       // Middle content slot
@@ -54,10 +47,9 @@ Item {
       }
 
       // Separator
-      Rectangle {
+      QRule {
         Layout.fillWidth: true
-        height: bar.dividerThickness
-        color: Theme.colors.border
+        implicitHeight: bar.dividerThickness
       }
 
       // Footer content slot

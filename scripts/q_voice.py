@@ -265,7 +265,7 @@ def strip_tags(s):
 # Portrait mood: the prefix asks the agent to open each reply with [lion:<mood>]. MoodFilter takes it (and any
 # later one) out of the stream before the panel, the speech and the log see it, holding back a tag that arrives
 # split across chunks ("[li" + "on:laugh]"). The last tag wins; unknown names count as "talk".
-MOODS = ("laugh", "point", "shrug", "yawn", "talk")
+MOODS = ("laugh", "point", "shrug", "yawn", "talk")      # talk: the default pose, whose mouth moves (LionAvatar.qml)
 _MOOD_TAG = re.compile(r"\[lion:([a-z_]*)\][ \t]*")
 _MOOD_PART = re.compile(r"\[(?:l(?:i(?:o(?:n(?::[a-z_]*)?)?)?)?)?$")   # an unfinished tag at the end of the buffer
 
@@ -723,7 +723,7 @@ def stream_llm(text, on_delta, stop, holder, speaker=None):
                "project and work detail is fine")
     EXPRESS = ("your voice is rendered by a text to speech model that acts bracketed audio tags, so direct the delivery "
                "instead of just saying the words: put a tag right before the words it applies to, from `[chuckles]`, "
-               "`[laughs]`, `[sighs]`, `[exhales]`, `[whispers]`, `[curious]`, `[excited]`, `[thoughtful]`, "
+               "`[laughs]`, `[sighs]`, `[exhales]`, `[whispers]`, `[curious]`, `[warm]`, `[thoughtful]`, "
                "`[sarcastic]`, `[surprised]`, `[annoyed]`, `[short pause]`, `[clears throat]` or a similar short "
                "lowercase direction; when you're flirting with me, sound POWERFUL, never soft: full chest voice, low, "
                "slow and in command, like someone used to being obeyed; reach for `[commanding]`, `[low and "

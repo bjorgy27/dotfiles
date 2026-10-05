@@ -46,7 +46,6 @@ Item {
 
   // ---- background agents (bridge -> q-inbox.service -> $XDG_RUNTIME_DIR/q-voice/agents.json)
   property var agents: []
-  property bool agentsOpen: true
   property string openAgent: ""         // id of the agent whose task/result is expanded
   property string openRuns: ""          // id of the agent whose earlier runs are listed
   property real now: Date.now()
@@ -98,6 +97,42 @@ Item {
     let took = (a.endedAt && a.startedAt) ? "took " + fmtDur(a.endedAt - a.startedAt) : ""
     let ago = a.endedAt ? fmtDur(Date.now() - a.endedAt) + " ago" : ""
     return [took, ago].filter(x => x).join(" · ")
+  }
+  // a little icon per agent, picked from its label (then its task): Symbols Nerd Font, Material Design set
+  readonly property var agentIcons: [
+    [/lion|avatar|portrait|svg|icon|draw|art\b|paint|sprite|image/, 0xf03d8],            // palette
+    [/\bgit\b|commit|push|branch|merge|rebase/, 0xf02a2],                               // git
+    [/review|audit|verify/, 0xf08a8],                                                   // clipboard check
+    [/\btest|benchmark|spike|prototype/, 0xf0096],                                      // flask
+    [/\bbug|\bfix|debug|crash|broke/, 0xf0a30],                                         // bug
+    [/satellite|goes|orbit|perigee|starlink|cubesat|sentinel/, 0xf0471],                // satellite
+    [/dish|antenna|\bsdr|radio|\brf\b|hrit|satdump/, 0xf1119],                          // antenna
+    [/voice|audio|tts|speak|speech|\bmic\b|sound/, 0xf147d],                            // waveform
+    [/rocket|launch|space ?job/, 0xf14df],                                              // rocket
+    [/homework|aero ?\d|controls|latex|math|equation|derive/, 0xf0871],                 // function
+    [/\bcad\b|freecad|mount|gimbal|\bprint|\b3d\b|mesh|\bfea\b/, 0xf01a7],              // cube
+    [/research|search|look up|\bfind|\bweb\b|compare/, 0xf0349],                        // magnify
+    [/resume|cover letter|write|draft|\bdoc|essay|letter|notes/, 0xf0cb6],              // pencil
+    [/\bmail|inbox/, 0xf01f0],                                                          // envelope
+    [/calendar|schedule|remind/, 0xf0e18],                                              // calendar
+    [/music|song|playlist/, 0xf0387],                                                   // note
+    [/chart|plot|graph|\bdata\b|stats/, 0xf012a],                                       // chart
+    [/build|compile|cargo|rust|install|package/, 0xf1323],                              // hammer & wrench
+    [/panel|quickshell|\bui\b|layout|theme|\bbar\b|widget|hyprland/, 0xf0a07],          // monitor
+    [/config|setup|service|systemd|gateway|automation/, 0xf08bb],                       // cog
+    [/clean|tidy|prune|trash/, 0xf00e2],                                                // broom
+    [/security|harden|firewall/, 0xf0cc8],                                              // shield
+  ]
+  function agentIcon(a) {
+    for (let s of [a.label || "", a.task || ""]) {
+      let t = s.toLowerCase()
+      for (let [re, cp] of agentIcons) if (re.test(t)) return String.fromCodePoint(cp)
+    }
+    return String.fromCodePoint(0xf06a9)                                                // robot
+  }
+  function agentTint(a) {
+    return a.status === "running" ? chat.violet : a.status === "queued" ? chat.gold
+         : a.status === "done" ? "#8fd19e" : "#ff7a8e"
   }
   readonly property bool voiceBusy: root.voiceState !== "idle"      // SUPER+T / mic engine running a turn
   // typed turns run detached (a shell reload must not kill them); typedPending tracks ours until the client exits
@@ -386,6 +421,15 @@ Item {
     y: metrics.s(24)
     restColor: chat.gold
     restOpacity: 0.8
+    // click: show / hide the corner lion (shell.qml) on this screen; it outlives the panel
+    HoverHandler { cursorShape: Qt.PointingHandCursor }
+    TapHandler {
+      onTapped: {
+        let here = barWindow.modelData.name
+        if (root.qCorner && root.qCornerScreen === here) root.qCorner = false
+        else { root.qCornerScreen = here; root.qCorner = true }
+      }
+    }
   }
   Text {
     id: title
@@ -425,21 +469,150 @@ Item {
       font.capitalization: Font.AllUppercase
     }
   }
+  // background agents: a little round icon each in the header's top right, beside the name. Hover one for what
+  // it is, click it for its card under the header; a working agent gets the comet ring like the portrait.
+  readonly property real agentTile: metrics.s(56)
+  property var hoverAgent: null
+  Item {
+    id: agentDock
+    visible: chat.shownAgents.length > 0
+    x: Math.max(title.x + title.width, statusRow.x + statusRow.width) + metrics.spacingLarge
+    y: avatar.y + metrics.s(6)
+    width: parent.width - chat.pad - x
+    height: avatar.height - metrics.s(6)
+
+    Text {
+      id: dockHead
+      anchors.right: parent.right
+      width: Math.min(implicitWidth, parent.width)
+      elide: Text.ElideLeft
+      text: chat.hoverAgent ? chat.hoverAgent.label + " · " + chat.agentWhen(chat.hoverAgent)
+          : "AGENTS  " + [chat.agentsRunning ? chat.agentsRunning + " running" : "",
+                          chat.agentsQueued ? chat.agentsQueued + " queued" : "",
+                          (chat.shownAgents.length - chat.agentsRunning - chat.agentsQueued - chat.agentsFailed) ? (chat.shownAgents.length - chat.agentsRunning - chat.agentsQueued - chat.agentsFailed) + " done" : "",
+                          chat.agentsFailed ? chat.agentsFailed + " failed" : ""].filter(x => x).join(" · ")
+      color: chat.hoverAgent ? chat.inkDim : chat.goldDim
+      font.family: "monospace"; font.pixelSize: metrics.fontTiny; font.letterSpacing: chat.hoverAgent ? 0 : metrics.s(1)
+    }
+
+    Flickable {
+      y: dockHead.height + metrics.s(10)
+      width: parent.width
+      height: parent.height - y
+      contentHeight: dockFlow.implicitHeight
+      clip: true
+      boundsBehavior: Flickable.StopAtBounds
+      Flow {
+        id: dockFlow
+        width: parent.width
+        layoutDirection: Qt.RightToLeft
+        spacing: metrics.s(6)
+        Repeater {
+          model: chat.shownAgents
+          Item {
+            id: tileItem
+            required property var modelData
+            readonly property bool open: chat.openAgent === modelData.id
+            readonly property bool live: modelData.status === "running"
+            readonly property color tint: chat.agentTint(modelData)
+            width: chat.agentTile + metrics.s(14)
+            height: chat.agentTile + tileCap.height + metrics.s(6)
+
+            Rectangle {
+              id: face
+              anchors.horizontalCenter: parent.horizontalCenter
+              width: chat.agentTile; height: width; radius: width / 2
+              color: tileItem.open ? Qt.rgba(0.17, 0.10, 0.32, 0.95)
+                   : tileHover.hovered ? Qt.rgba(0.14, 0.09, 0.27, 0.92) : Qt.rgba(0.10, 0.07, 0.20, 0.85)
+              border.width: tileItem.open ? 2 : 1
+              border.color: tileItem.open ? chat.gold : Qt.rgba(tileItem.tint.r, tileItem.tint.g, tileItem.tint.b, tileItem.live ? 0.25 : 0.55)
+              scale: tileHover.hovered ? 1.06 : 1
+              Behavior on scale { NumberAnimation { duration: 120 } }
+              Behavior on color { ColorAnimation { duration: 150 } }
+              Text {
+                anchors.centerIn: parent
+                text: chat.agentIcon(tileItem.modelData)
+                color: tileItem.live || tileItem.open ? chat.gold : chat.goldDim
+                font.family: "Symbols Nerd Font"
+                font.pixelSize: Math.round(chat.agentTile * 0.46)
+              }
+              // working: a small violet-to-pink comet round the rim (painted once, spun on the render thread)
+              Canvas {
+                id: tileSweep
+                anchors.fill: parent
+                anchors.margins: -metrics.s(2)
+                visible: tileItem.live
+                onWidthChanged: requestPaint()
+                onPaint: {
+                  let ctx = getContext("2d")
+                  ctx.reset()
+                  if (width < 8) return
+                  let lw = metrics.s(2.5), r = width / 2 - lw, c = width / 2, n = 48, span = Math.PI * 1.2
+                  for (let i = 0; i < n; i++) {
+                    let t = (i + 1) / n
+                    ctx.strokeStyle = Qt.rgba(0.35 + 0.65 * t, 0.2 + 0.35 * t * t, 0.95 - 0.1 * t, 0.1 + 0.9 * Math.pow(t, 1.3))
+                    ctx.lineWidth = lw
+                    ctx.beginPath(); ctx.arc(c, c, r, -Math.PI / 2 + span * i / n, -Math.PI / 2 + span * (i + 1.4) / n, false); ctx.stroke()
+                  }
+                }
+                RotationAnimator on rotation {
+                  running: tileSweep.visible && chat.isOpen
+                  from: 0; to: 360; duration: 1600; loops: Animation.Infinite
+                }
+              }
+              Rectangle {                // status dot, bottom right
+                x: parent.width * 0.78 - width / 2; y: parent.height * 0.78 - height / 2
+                width: metrics.s(11); height: width; radius: width / 2
+                color: tileItem.tint
+                border.width: metrics.s(2); border.color: "#0d0822"
+                SequentialAnimation on opacity {
+                  running: tileItem.live && chat.isOpen
+                  loops: Animation.Infinite
+                  NumberAnimation { to: 0.4; duration: 700 }
+                  NumberAnimation { to: 1.0; duration: 700 }
+                }
+              }
+            }
+            Text {
+              id: tileCap
+              anchors.top: face.bottom; anchors.topMargin: metrics.s(4)
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              elide: Text.ElideRight
+              text: (tileItem.modelData.label || "").split(/[:—-]/)[0].trim()
+              color: tileItem.open ? chat.ink : chat.inkMute
+              font.family: "monospace"; font.pixelSize: metrics.s(10)
+            }
+            HoverHandler {
+              id: tileHover
+              cursorShape: Qt.PointingHandCursor
+              onHoveredChanged: {
+                if (hovered) chat.hoverAgent = tileItem.modelData
+                else if (chat.hoverAgent && chat.hoverAgent.id === tileItem.modelData.id) chat.hoverAgent = null
+              }
+            }
+            TapHandler { onTapped: chat.openAgent = tileItem.open ? "" : tileItem.modelData.id }
+          }
+        }
+      }
+    }
+  }
+
   Item {                                        // invisible spacer: where the header ends and the log begins
     id: divider
     y: avatar.y + avatar.height + metrics.s(14)
     width: parent.width; height: 1
   }
 
-  // where the log ends: above the agents tray, else the attachments, else the input
+  // where the log ends: above the attachments, else the input; it starts under the open agent's card, if any
   readonly property real dockTop: attachRow.visible ? attachRow.y : inputBar.y
-  readonly property real logBottom: tray.visible ? tray.y - metrics.s(14) : dockTop - metrics.s(12)
+  readonly property real logBottom: dockTop - metrics.s(12)
 
   // conversation
   ListView {
     id: log
     x: metrics.s(22)
-    y: divider.y + metrics.s(18)
+    y: tray.visible ? tray.y + tray.height + metrics.s(14) : divider.y + metrics.s(18)
     width: parent.width - metrics.s(44)
     height: chat.logBottom - y
     clip: true
@@ -696,45 +869,18 @@ Item {
     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: chat.scrollDown(true) }
   }
 
-  // background agents: a tray of slim cards above the input (hidden when there are none). Click a card for its
-  // task and result, the header to fold the tray away.
+  // the agent picked in the header: its card (task, live progress, result, cancel) sits under the header and
+  // pushes the conversation down. Click its title line or its icon again to close it.
+  readonly property var openAgentData: shownAgents.find(a => a.id === openAgent) || null
   Column {
     id: tray
-    visible: chat.shownAgents.length > 0
+    visible: chat.openAgentData !== null
     x: chat.pad
     width: parent.width - chat.pad * 2
-    y: chat.dockTop - metrics.s(14) - height
+    y: divider.y + metrics.s(6)
     spacing: metrics.s(8)
 
-    Item {
-      width: parent.width
-      height: trayHead.implicitHeight
-      Row {
-        id: trayHead
-        spacing: metrics.s(8)
-        Text { text: "AGENTS"; color: chat.goldDim; font.family: "monospace"; font.pixelSize: metrics.fontTiny; font.letterSpacing: metrics.s(3) }
-        Text {
-          text: [chat.agentsRunning ? chat.agentsRunning + " running" : "",
-                 chat.agentsQueued ? chat.agentsQueued + " queued" : "",
-                 (chat.shownAgents.length - chat.agentsRunning - chat.agentsQueued - chat.agentsFailed) ? (chat.shownAgents.length - chat.agentsRunning - chat.agentsQueued - chat.agentsFailed) + " done" : "",
-                 chat.agentsFailed ? chat.agentsFailed + " failed" : ""].filter(x => x).join(" · ")
-          color: chat.inkMute
-          font.family: "monospace"; font.pixelSize: metrics.fontTiny
-        }
-      }
-      Text {
-        anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
-        text: chat.agentsOpen ? "󰅀" : "󰅂"
-        color: chat.inkMute
-        font.pixelSize: metrics.fontSmall
-        font.family: "monospace"
-      }
-      MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: chat.agentsOpen = !chat.agentsOpen }
-    }
-
     Flickable {
-      visible: chat.agentsOpen
       width: parent.width
       height: Math.min(agentList.implicitHeight, chat.height * 0.3)
       contentHeight: agentList.implicitHeight
@@ -745,11 +891,11 @@ Item {
         width: parent.width
         spacing: metrics.s(6)
         Repeater {
-          model: chat.shownAgents
+          model: chat.openAgentData ? [chat.openAgentData] : []
           Rectangle {
             id: arow
             required property var modelData
-            readonly property bool open: chat.openAgent === modelData.id
+            readonly property bool open: true
             readonly property bool live: modelData.status === "running"
             readonly property color tint: modelData.status === "running" ? chat.violet
                                           : modelData.status === "queued" ? chat.gold
@@ -827,7 +973,7 @@ Item {
                 MouseArea {                // title line toggles the details; the text below stays selectable
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: chat.openAgent = arow.open ? "" : arow.modelData.id
+                  onClicked: chat.openAgent = ""
                 }
                 Rectangle {               // cancel: click once to arm (turns red), again to cancel
                   id: akill

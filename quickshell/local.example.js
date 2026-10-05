@@ -4,3 +4,4 @@
 var homeLat = 0.0;
 var homeLon = 0.0;
 var voiceHeadset = "";  // name of the Bluetooth headset whose button starts a voice turn ("" = none)
+var themeFlavor = "";   // "" = the default (galaxy); or "mocha", "latte", "frappe", "macchiato"

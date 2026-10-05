@@ -160,7 +160,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.colors.panel
+        color: Theme.colors.surface
         radius: metrics.radiusLarge
 
         ColumnLayout {
@@ -175,12 +175,8 @@ Item {
                 Layout.fillWidth: true
                 spacing: metrics.spacingSmall
 
-                Text {
+                QHeading {
                     text: "󰖩  Wi-Fi"
-                    color: Theme.colors.textPrimary
-                    font.pixelSize: metrics.fontLarge
-                    font.bold: true
-                    font.family: "monospace"
                     Layout.fillWidth: true
                 }
 
@@ -212,10 +208,9 @@ Item {
                 }
             }
 
-            Rectangle {
+            QRule {
                 Layout.fillWidth: true
-                height: bar.dividerThickness
-                color: Theme.colors.border
+                implicitHeight: bar.dividerThickness
             }
 
             // Status message
@@ -260,6 +255,8 @@ Item {
                         height: metrics.s(38)
                         radius: metrics.radiusSmall
                         color: delegateRoot.modelData.active ? Theme.colors.inset : "transparent"
+                        border.width: delegateRoot.modelData.active ? 1 : 0
+                        border.color: Theme.colors.cardBorder
 
                         RowLayout {
                             anchors {
@@ -321,7 +318,9 @@ Item {
                             Layout.fillWidth: true
                             height: metrics.s(28)
                             radius: metrics.radiusSmall
-                            color: Theme.colors.inset
+                            color: Theme.colors.field
+                            border.width: 1
+                            border.color: passwordField.activeFocus ? Theme.colors.fieldFocus : Theme.colors.fieldBorder
 
                             TextInput {
                                 id: passwordField
@@ -358,12 +357,12 @@ Item {
                             width: metrics.s(56)
                             height: metrics.s(28)
                             radius: metrics.radiusSmall
-                            color: Theme.colors.blue
+                            color: Theme.colors.accent
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "Connect"
-                                color: Theme.colors.panelDeep
+                                color: Theme.colors.onAccent
                                 font.pixelSize: metrics.fontTiny
                                 font.bold: true
                             }

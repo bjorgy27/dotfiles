@@ -214,7 +214,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.colors.panel
+        color: Theme.colors.surface
         radius: metrics.radiusLarge
 
         ColumnLayout {
@@ -229,12 +229,8 @@ Item {
                 Layout.fillWidth: true
                 spacing: metrics.spacingSmall
 
-                Text {
+                QHeading {
                     text: "󰂯  Bluetooth"
-                    color: Theme.colors.textPrimary
-                    font.pixelSize: metrics.fontLarge
-                    font.bold: true
-                    font.family: "monospace"
                     Layout.fillWidth: true
                 }
 
@@ -243,8 +239,8 @@ Item {
                     visible: btWidget.powerEnabled
                     width: scanText.implicitWidth + metrics.spacingNormal * 2
                     height: metrics.s(22)
-                    radius: metrics.radiusSmall
-                    color: btWidget.scanning ? Theme.colors.blue : Theme.colors.inset
+                    radius: Theme.colors.nebula ? height / 2 : metrics.radiusSmall
+                    color: btWidget.scanning ? Theme.colors.live : Theme.colors.inset
                     border.width: 1
                     border.color: Theme.colors.border
 
@@ -252,7 +248,7 @@ Item {
                         id: scanText
                         anchors.centerIn: parent
                         text: btWidget.scanning ? "Scanning…" : "Scan"
-                        color: btWidget.scanning ? Theme.colors.panelDeep : Theme.colors.textSecondary
+                        color: btWidget.scanning ? Theme.colors.onAccent : Theme.colors.textSecondary
                         font.pixelSize: metrics.fontTiny
                         font.bold: true
                     }
@@ -295,10 +291,9 @@ Item {
                 }
             }
 
-            Rectangle {
+            QRule {
                 Layout.fillWidth: true
-                height: bar.dividerThickness
-                color: Theme.colors.border
+                implicitHeight: bar.dividerThickness
             }
 
             // Status message
@@ -354,6 +349,8 @@ Item {
                     height: metrics.s(38)
                     radius: metrics.radiusSmall
                     color: delegateRoot.modelData.connected ? Theme.colors.inset : "transparent"
+                    border.width: delegateRoot.modelData.connected ? 1 : 0
+                    border.color: Theme.colors.cardBorder
 
                     RowLayout {
                         anchors {

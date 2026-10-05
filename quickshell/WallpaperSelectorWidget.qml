@@ -405,13 +405,24 @@ Item {
                 }
             }
 
+            // the current pick gets the gold hairline (none under a flat theme)
+            Rectangle {
+                anchors.fill: img
+                anchors.margins: -1
+                visible: wallpaperDelegate.isCurrentItem
+                radius: metrics.radiusNormal + 1
+                color: "transparent"
+                border.width: 1
+                border.color: Theme.colors.hairline
+            }
+
             Text {
                 anchors.top: img.bottom
                 anchors.topMargin: metrics.spacingSmall
                 anchors.left: parent.left
                 anchors.right: parent.right
                 text: fileBaseName
-                color: Theme.colors.textSecondary
+                color: wallpaperDelegate.isCurrentItem && Theme.colors.nebula ? Theme.colors.heading : Theme.colors.textSecondary
                 font.family: "Noto Sans"
                 horizontalAlignment: Text.AlignHCenter
                 elide: Text.ElideRight

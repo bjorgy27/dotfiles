@@ -1,5 +1,6 @@
 singleton Theme Theme.qml
 ColorTheme ColorTheme.qml
+QGalaxy QGalaxy.qml
 CatppuccinMocha CatppuccinMocha.qml
 CatppuccinLatte CatppuccinLatte.qml
 CatppuccinFrappe CatppuccinFrappe.qml

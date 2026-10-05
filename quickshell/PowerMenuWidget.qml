@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import "themes"
+import "templates"
 
 // Power Menu
 Item {
@@ -73,7 +74,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.colors.panel
+        color: Theme.colors.surface
         radius: metrics.radiusLarge
 
         ColumnLayout {
@@ -83,20 +84,15 @@ Item {
             }
             spacing: metrics.spacingSmall
 
-            Text {
+            QHeading {
                 text: "Power Options"
-                color: Theme.colors.textPrimary
-                font.pixelSize: metrics.fontLarge
-                font.bold: true
-                font.family: "monospace"
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
             }
 
-            Rectangle {
+            QRule {
                 Layout.fillWidth: true
-                height: metrics.s(2)
-                color: Theme.colors.border
+                implicitHeight: Theme.colors.ruleFades ? 1 : metrics.s(2)
             }
 
             RowLayout {
@@ -107,34 +103,48 @@ Item {
                 Repeater {
                     model: powerMenuWidget.powerActions
 
+                    // One option: a round glass tile with its icon, the label under it.
                     delegate: Rectangle {
+                        id: option
                         required property int index
                         required property var modelData
+                        readonly property bool selected: powerMenuWidget.selectedIndex === index
 
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        color: powerMenuWidget.selectedIndex === index ? Theme.colors.inset : "transparent"
+                        color: selected && !Theme.colors.nebula ? Theme.colors.inset : "transparent"
                         radius: metrics.radiusNormal
-                        border.width: powerMenuWidget.selectedIndex === index ? 2 : 0
+                        border.width: selected && !Theme.colors.nebula ? 2 : 0
                         border.color: modelData.color
 
                         ColumnLayout {
                             anchors.centerIn: parent
-                            spacing: metrics.spacingSmall
+                            spacing: metrics.spacingTiny
 
-                            Text {
-                                text: modelData.icon
-                                color: modelData.color
-                                font.pixelSize: metrics.fontXL
-                                font.family: "monospace"
+                            Rectangle {
                                 Layout.alignment: Qt.AlignHCenter
+                                implicitWidth: metrics.s(44)
+                                implicitHeight: implicitWidth
+                                radius: width / 2
+                                color: option.selected ? Theme.colors.inset : Theme.colors.card
+                                border.width: option.selected ? 2 : 1
+                                border.color: option.selected ? option.modelData.color : Theme.colors.cardBorder
+                                scale: option.selected ? 1.06 : 1
+                                Behavior on scale { NumberAnimation { duration: 120 } }
+                                Behavior on color { ColorAnimation { duration: 150 } }
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: option.modelData.icon
+                                    color: option.modelData.color
+                                    font.pixelSize: metrics.s(22)
+                                    font.family: "monospace"
+                                }
                             }
 
-                            Text {
-                                text: modelData.label
-                                color: Theme.colors.textPrimary
-                                font.pixelSize: metrics.fontTiny
-                                font.bold: true
+                            QLabel {
+                                text: option.modelData.label
+                                color: option.selected ? Theme.colors.textPrimary : Theme.colors.textSecondary
                                 Layout.alignment: Qt.AlignHCenter
                             }
                         }

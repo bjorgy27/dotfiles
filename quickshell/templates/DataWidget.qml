@@ -17,10 +17,8 @@ Item {
   property int titleSize: metrics.fontNormal
   property alias dataContent: dataPlaceholder.children
 
-  Rectangle {
+  QCard {
     anchors.fill: parent
-    color: Theme.colors.panel
-    radius: metrics.radiusLarge
 
     ColumnLayout {
       anchors {
@@ -32,21 +30,16 @@ Item {
       spacing: metrics.spacingSmall
 
       // Title
-      Text {
+      QHeading {
         text: root.title
-        color: Theme.colors.textPrimary
         font.pixelSize: root.titleSize
-        font.bold: true
-        font.family: "monospace"
         Layout.fillWidth: true
-        elide: Text.ElideRight
       }
 
       // Separator
-      Rectangle {
+      QRule {
         Layout.fillWidth: true
-        height: bar.dividerThickness
-        color: Theme.colors.border
+        implicitHeight: bar.dividerThickness
       }
 
       // Data content slot

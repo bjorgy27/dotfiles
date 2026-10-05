@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import "themes"
+import "templates"
 
 // Radar settings dropdown: weather product picker, aircraft/animation toggles
 // and a view reset. Everything writes through root.setMapSettings /
@@ -70,7 +71,7 @@ Item {
             width: parent.height - metrics.s(4)
             height: width
             radius: width / 2
-            color: pill.checked ? Theme.colors.panelDeep : Theme.colors.textPrimary
+            color: pill.checked ? Theme.colors.onAccent : Theme.colors.textPrimary
             anchors.verticalCenter: parent.verticalCenter
             x: pill.checked ? (parent.width - width - metrics.s(2)) : metrics.s(2)
             Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
@@ -136,7 +137,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.colors.panel
+        color: Theme.colors.surface
         radius: metrics.radiusLarge
 
         ColumnLayout {
@@ -146,27 +147,18 @@ Item {
             }
             spacing: metrics.spacingSmall
 
-            Text {
+            QHeading {
                 text: "  Radar Settings"
-                color: Theme.colors.textPrimary
-                font.pixelSize: metrics.fontLarge
-                font.bold: true
-                font.family: "monospace"
                 Layout.fillWidth: true
-                elide: Text.ElideRight
             }
 
-            Rectangle {
+            QRule {
                 Layout.fillWidth: true
                 Layout.preferredHeight: bar.dividerThickness
-                color: Theme.colors.border
             }
 
-            Text {
+            QLabel {
                 text: "Weather product"
-                color: Theme.colors.textSecondary
-                font.pixelSize: metrics.fontTiny
-                font.bold: true
                 Layout.topMargin: metrics.spacingTiny
             }
 
@@ -205,21 +197,21 @@ Item {
                                 radius: width / 2
                                 color: "transparent"
                                 border.width: metrics.s(2)
-                                border.color: productRow.selected ? Theme.colors.panelDeep : Theme.colors.textMuted
+                                border.color: productRow.selected ? Theme.colors.onAccent : Theme.colors.textMuted
 
                                 Rectangle {
                                     anchors.centerIn: parent
                                     width: metrics.s(6)
                                     height: width
                                     radius: width / 2
-                                    color: Theme.colors.panelDeep
+                                    color: Theme.colors.onAccent
                                     visible: productRow.selected
                                 }
                             }
 
                             Text {
                                 text: productRow.modelData.name
-                                color: productRow.selected ? Theme.colors.panelDeep : Theme.colors.textPrimary
+                                color: productRow.selected ? Theme.colors.onAccent : Theme.colors.textPrimary
                                 font.pixelSize: metrics.fontSmall
                                 font.bold: productRow.selected
                                 font.family: "monospace"
@@ -227,7 +219,7 @@ Item {
 
                             Text {
                                 text: productRow.modelData.hint
-                                color: productRow.selected ? Theme.colors.panelDeep : Theme.colors.textMuted
+                                color: productRow.selected ? Theme.colors.onAccent : Theme.colors.textMuted
                                 opacity: productRow.selected ? 0.8 : 1
                                 font.pixelSize: metrics.fontTiny
                                 Layout.fillWidth: true
@@ -247,18 +239,14 @@ Item {
                 }
             }
 
-            Rectangle {
+            QRule {
                 Layout.fillWidth: true
                 Layout.topMargin: metrics.spacingTiny
                 Layout.preferredHeight: bar.dividerThickness
-                color: Theme.colors.border
             }
 
-            Text {
+            QLabel {
                 text: "Overlays"
-                color: Theme.colors.textSecondary
-                font.pixelSize: metrics.fontTiny
-                font.bold: true
                 Layout.topMargin: metrics.spacingTiny
             }
 
@@ -276,11 +264,10 @@ Item {
                 onToggled: radarSettingsWidget.toggleAnimate()
             }
 
-            Rectangle {
+            QRule {
                 Layout.fillWidth: true
                 Layout.topMargin: metrics.spacingTiny
                 Layout.preferredHeight: bar.dividerThickness
-                color: Theme.colors.border
             }
 
             // Reset view button
@@ -288,14 +275,16 @@ Item {
                 Layout.fillWidth: true
                 Layout.topMargin: metrics.spacingSmall
                 Layout.preferredHeight: metrics.s(32)
-                radius: metrics.radiusNormal
-                color: resetMouse.containsMouse ? Theme.colors.border : Theme.colors.inset
+                radius: Theme.colors.nebula ? height / 2 : metrics.radiusNormal
+                color: resetMouse.containsMouse ? (Theme.colors.nebula ? Theme.colors.inset : Theme.colors.border) : (Theme.colors.nebula ? Theme.colors.card : Theme.colors.inset)
+                border.width: 1
+                border.color: resetMouse.containsMouse ? Theme.colors.fieldFocus : Theme.colors.fieldBorder
                 Behavior on color { ColorAnimation { duration: 100 } }
 
                 Text {
                     anchors.centerIn: parent
                     text: "󰋜  Reset view to home"
-                    color: Theme.colors.textPrimary
+                    color: Theme.colors.nebula ? Theme.colors.heading : Theme.colors.textPrimary
                     font.pixelSize: metrics.fontSmall
                     font.family: "monospace"
                 }
