@@ -48,6 +48,7 @@ import glob
 import io
 import json
 import os
+import select
 import queue
 import re
 import shlex
@@ -126,6 +127,13 @@ VAD_MODEL = E("Q_VAD_MODEL", f"{SHARE}/silero_vad.onnx")
 VAD_SILENCE_MS = int(E("Q_VAD_SILENCE_MS", "700"))  # trailing silence that ends your turn
 VAD_START_TIMEOUT_S = float(E("Q_VAD_START_TIMEOUT_S", "20"))  # first press: wait this long for speech
 CONVERSE_TIMEOUT_S = float(E("Q_CONVERSE_TIMEOUT_S", "8"))  # after replying: wait this long for a follow-up
+# A follow-up that never goes quiet is a video or the room, not Beck: cap it and drop it (2026-10-05, the mic sat open
+# 40 s after a reply)
+CONVERSE_MAX_S = float(E("Q_CONVERSE_MAX_S", "30"))
+# The Sonos headset only grows a mic once recording starts (WirePlumber switches it to its headset profile, a couple of
+# seconds), so the first audio gets a long grace; after that, a gap this long means the mic died: give up, don't hang
+NO_AUDIO_START_S = float(E("Q_NO_AUDIO_START_S", "10"))
+NO_AUDIO_S = float(E("Q_NO_AUDIO_S", "3"))
 MAX_RECORD_S = float(E("Q_MAX_RECORD_S", "45"))
 PAUSE_MEDIA = E("Q_PAUSE_MEDIA", "1") == "1"
 SPEAK_MAX_CHARS = int(E("Q_SPEAK_MAX_CHARS", "1200"))
@@ -167,6 +175,8 @@ EVENTS = os.path.join(RUN, "events.jsonl")         # live feed for the Q chat pa
 CHATF = os.path.join(STATE_DIR, "chat.jsonl")       # panel history (last 80 lines shown)
 VIA = "voice"          # "text" for typed turns from the panel
 QUIET = False          # typed turns: no speech, the reply is read on screen
+PICKUP = ""            # --pickup (q_pickup.py reporting a finished agent): what the bar shows instead of the note
+TURN_FAILED = False    # the gateway errored before any reply; a pickup exits 1 so q_pickup.py retries
 
 
 def emit(ev):
@@ -192,6 +202,7 @@ _state_lock = threading.Lock()
 _last_state = {}
 _last_speaker = None    # the raw /identify result behind _last_state, so a state refresh can keep it
 _mood = ""              # this turn's [lion:<mood>]; kept after the turn so the portrait holds it
+_gesture = ""           # a momentary portrait while speaking: "laugh" while a sentence with a laugh tag plays
 
 
 def set_state(state, text="", reply="", speaker=None):
@@ -202,7 +213,7 @@ def set_state(state, text="", reply="", speaker=None):
         d = {"state": state, "text": text, "reply": reply, "ts": int(time.time()),
              "speaker": SHORT_NAMES.get(speaker["speaker"], speaker["speaker"].title()) if speaker else "",
              "speakers": [SHORT_NAMES.get(s, s.title()) for s in speaker.get("speakers", [])] if speaker else [],
-             "mood": _mood}
+             "mood": _mood, "gesture": _gesture}
         _last_state = d
         tmp = STATEF + ".tmp"
         with open(tmp, "w") as f:
@@ -265,8 +276,14 @@ def strip_tags(s):
 # Portrait mood: the prefix asks the agent to open each reply with [lion:<mood>]. MoodFilter takes it (and any
 # later one) out of the stream before the panel, the speech and the log see it, holding back a tag that arrives
 # split across chunks ("[li" + "on:laugh]"). The last tag wins; unknown names count as "talk".
-MOODS = ("laugh", "point", "shrug", "yawn", "talk")      # talk: the default pose, whose mouth moves (LionAvatar.qml)
+MOODS = ("laugh", "point", "shrug", "yawn", "talk", "smug", "gloat", "eager", "blush", "think")      # talk: the default pose, whose mouth moves (LionAvatar.qml)
 _MOOD_TAG = re.compile(r"\[lion:([a-z_]*)\][ \t]*")
+# an audio tag that laughs ([laughs], [chuckles], [low chuckle], [dark laugh] ...): the portrait shows the laugh drawing
+# while that sentence is heard (Beck, 2026-10-05)
+_LAUGH_TAG = re.compile(r"\[[a-z ,'-]*\b(?:laugh|laughs|laughing|chuckle|chuckles|chuckling)\b[a-z ,'-]*\]", re.I)
+LAUGH_SECS = float(E("Q_LAUGH_SECS", "0.9"))
+OUT_LATENCY = float(E("Q_OUT_LATENCY", "0.12"))   # pitch filter + pw-play's 60 ms + the sink, before a byte is heard
+CHAR_SECS = 0.065                                  # spoken seconds per character, until a sentence's audio is all in
 _MOOD_PART = re.compile(r"\[(?:l(?:i(?:o(?:n(?::[a-z_]*)?)?)?)?)?$")   # an unfinished tag at the end of the buffer
 
 
@@ -421,7 +438,29 @@ def _readn(f, n):
     return buf
 
 
-def listen(start_timeout, hint):
+
+def headset_call_mode():
+    """Put a Bluetooth headset's card in its headset (call) profile BEFORE the earcon and the recorder start. If the
+    chime is still playing on the music profile when recording starts, WirePlumber's switch tears the link down and the
+    mic dies after ~0.5 s (2026-10-05, Sonos Ace)."""
+    try:
+        src = subprocess.run(["pactl", "get-default-source"], capture_output=True, text=True, timeout=3).stdout.strip()
+        if not src.startswith("bluez_input."):
+            return
+        card = "bluez_card." + src.split(".", 1)[1].replace(":", "_")
+        cards = json.loads(subprocess.run(["pactl", "-f", "json", "list", "cards"], capture_output=True, text=True,
+                                          timeout=3).stdout or "[]")
+        cur = next((c for c in cards if c.get("name") == card), None)
+        if not cur or cur.get("active_profile", "").startswith("headset-head-unit"):
+            return
+        prof = next((n for n in cur.get("profiles", {}) if n.startswith("headset-head-unit")), None)
+        if prof and subprocess.run(["pactl", "set-card-profile", card, prof], timeout=3).returncode == 0:
+            time.sleep(1.5)
+    except Exception as e:  # noqa - never break a turn over the headset
+        dbg(f"headset call mode failed: {e}")
+
+
+def listen(start_timeout, hint, followup=False):
     """Record the mic until end-of-speech (VAD), a toggle press, or timeout.
     Returns wav bytes (16k mono s16) or None (nothing said / cancelled / toggle before any speech)."""
     frame = 512  # 32 ms at 16k
@@ -429,6 +468,7 @@ def listen(start_timeout, hint):
     preroll = collections.deque(maxlen=12)  # ~380 ms before speech start
     vad = get_vad()
     Ctl.toggle.clear()
+    headset_call_mode()
     chime("start", wait=True)   # blocking: the blip must finish before the mic opens
     rec = subprocess.Popen(
         ["pw-record", "--rate", str(SR), "--channels", "1", "--format", "s16", "--raw", "--latency", "20ms", "-"],
@@ -441,6 +481,10 @@ def listen(start_timeout, hint):
     quiet = 0
     voiced_run = 0
     t0 = time.time()
+    t_speech = t0
+    last_audio = t0
+    got_audio = False
+    pending = b""
     reason = "timeout"
     try:
         while True:
@@ -454,13 +498,31 @@ def listen(start_timeout, hint):
             if not started and now - t0 > start_timeout:
                 reason = "timeout"
                 break
-            if now - t0 > MAX_RECORD_S:
+            # a follow-up's cap counts from when Beck starts talking, not from when the mic opens (2026-10-06: the
+            # old clock ate any follow-up that ran past it, however soon he began)
+            if (now - t_speech > CONVERSE_MAX_S) if (followup and started) else (now - t0 > MAX_RECORD_S):
                 reason = "max"
                 break
-            buf = _readn(rec.stdout, frame * 2)
-            if len(buf) < frame * 2:
+            # never block on the mic: a source that delivers nothing (the Bluetooth headset's mic while it is in
+            # music mode) used to freeze the turn here, deaf to cancel and the toggle (2026-10-05)
+            r, _, _ = select.select([rec.stdout], [], [], 0.1)
+            if not r:
+                if now - last_audio > (NO_AUDIO_S if got_audio else NO_AUDIO_START_S):
+                    reason = "noaudio"
+                    break
+                continue
+            chunk = os.read(rec.stdout.fileno(), frame * 2 - len(pending))
+            if not chunk:
                 reason = "eof"
                 break
+            if not got_audio:
+                t0 = now                 # the wait for speech starts once the mic is actually live
+            last_audio = now
+            got_audio = True
+            pending += chunk
+            if len(pending) < frame * 2:
+                continue
+            buf, pending = pending, b""
             everything.append(buf)
             samples = np.frombuffer(buf, dtype=np.int16)
             if vad is None:
@@ -469,8 +531,9 @@ def listen(start_timeout, hint):
             if not started:
                 preroll.append(buf)
                 voiced_run = voiced_run + 1 if p > 0.5 else 0
-                if voiced_run >= 3:  # ~100 ms of speech
+                if voiced_run >= (6 if followup else 3):  # ~100 ms of speech (~200 ms for a follow-up)
                     started = True
+                    t_speech = now
                     frames.extend(preroll)
                     quiet = 0
                     dbg("speech start")
@@ -492,7 +555,14 @@ def listen(start_timeout, hint):
     dbg(f"listen end: {reason}, started={started}, {len(everything) * 32} ms")
     if reason in ("cancel",):
         return None
+    if reason == "noaudio":
+        notify("The mic isn't sending any sound", "audio-input-microphone-muted", 6000,
+               "check the input device (a Bluetooth headset's mic only works in its headset mode)")
+        return None
     if reason == "timeout":
+        return None
+    if followup and reason == "max":
+        dbg("follow-up never went quiet: background audio, dropped")
         return None
     if not started:
         # No VAD: the press is the send button. With VAD: a press before any speech means "stop listening".
@@ -739,14 +809,20 @@ def stream_llm(text, on_delta, stop, holder, speaker=None):
                "clause and never replaces words, since tags are stripped from the on-screen text; also use `...` for a "
                "hesitation and CAPITALS for one stressed word now and then; never put a tag inside a title")
     # the panel shows a lion portrait that matches the reply; the tag is stripped before anything shows or is spoken
-    MOOD = ("begin the reply with exactly one portrait tag: `[lion:laugh]` when I said something funny, "
-            "`[lion:point]` when something worked, it's good news, you're correcting me or handing me the answer, "
-            "`[lion:shrug]` when something broke, failed or can't be done, `[lion:yawn]` when it's boring, trivial "
-            "or late at night, otherwise `[lion:talk]`; never tag a NO_REPLY")
+    MOOD = ("begin the reply with exactly one portrait tag, and use the whole range rather than the same two: "
+            "`[lion:blush]` whenever there's any flirting or a compliment either way (I flirt or compliment you, "
+            "you flirt or compliment me, or what I said could be read as flirty), `[lion:laugh]` when I said "
+            "something funny, `[lion:gloat]` when you're triumphant or delighted with yourself, `[lion:think]` when "
+            "you're weighing options, reasoning it out or not sure yet, `[lion:smug]` when you're aloof, superior, unimpressed or teasing me, "
+            "`[lion:eager]` when you're keen to tell me something or making an emphatic point, `[lion:point]` when "
+            "something worked, it's good news, you're correcting me or handing me the answer, `[lion:shrug]` when "
+            "something broke, failed or can't be done, `[lion:yawn]` when it's boring, trivial or late at night, "
+            "otherwise `[lion:talk]`; never tag a NO_REPLY")
     style = f"; {NATURAL}" + (f"; {EXPRESS}" if EL_V3 and tts_chain() and tts_chain()[0][0] == "elevenlabs" else "")
     style += f"; {MOOD}" if LION else ""
     where = (f"voice, {DEVICE}" if VIA == "voice"
-             else f"typed in the Q panel on {DEVICE}, " + ("not spoken" if QUIET else "reply read aloud")) + (f" ({DEVICE_NOTE})" if DEVICE_NOTE else "")
+             else ("automatic agent pickup, not typed by me," if PICKUP else "typed") + f" in the Q panel on {DEVICE}, "
+             + ("not spoken" if QUIET else "reply read aloud")) + (f" ({DEVICE_NOTE})" if DEVICE_NOTE else "")
     who = speaker_note(speaker)
     ctx = f"; {who}" if who else ""
     prefix = (f"[{where}; spoken reply: one to three short sentences unless I ask for detail, "
@@ -959,9 +1035,14 @@ class Player:
         self.lock = threading.Lock()
         self.first_audio_at = None
         self.bytes = 0
+        self.play_end = 0.0     # wall time the audio written so far finishes playing (gaps between sentences included)
 
     def write(self, chunk):
+        """Queue `chunk`; returns the wall time it starts being heard (output latency included)."""
         with self.lock:
+            now = time.time()
+            start = max(now + OUT_LATENCY, self.play_end)
+            self.play_end = start + len(chunk) / (PCM_RATE * 2)
             if self.p is None:
                 if self.first_audio_at is None:
                     self.first_audio_at = time.time()
@@ -984,11 +1065,12 @@ class Player:
             self.bytes += len(chunk)
         if self.p == "mute":
             time.sleep(len(chunk) / (PCM_RATE * 2))
-            return
+            return start
         try:
             self.p.stdin.write(chunk)
         except (BrokenPipeError, ValueError):
             pass
+        return start
 
     def finish(self):
         """Close the stream and wait for playback to drain."""
@@ -1031,8 +1113,9 @@ def run_turn(text, t_speech_end=None, speaker=None):
         say_line(REFUSAL)
         return REFUSAL, False
 
-    global _mood
+    global _mood, _gesture, TURN_FAILED
     _mood = ""
+    shown = PICKUP or text    # a pickup's note is plumbing: the panel shows only the reply
     stop = threading.Event()
     interrupted = threading.Event()
     sentences = []            # cleaned sentences in order (for TTS context)
@@ -1046,21 +1129,22 @@ def run_turn(text, t_speech_end=None, speaker=None):
     llm_err = [None]
     holder = {}
 
-    set_state("thinking", text, speaker=speaker)
-    emit({"type": "transcript", "text": text, "via": VIA})
-    remember("user", text)
-    notify("Thinking…", "system-search", 0, text)
+    set_state("thinking", shown, speaker=speaker)
+    if not PICKUP:
+        emit({"type": "transcript", "text": text, "via": VIA})
+        remember("user", text)
+        notify("Thinking…", "system-search", 0, text)
     if speaker and speaker.get("shift"):
         tag = " (" + " -> ".join(f"{s['speaker']} {s['score']:.2f}" for s in speaker.get("segments", [])) + ")"
     else:
         tag = f" ({speaker['speaker']} {speaker.get('score', 0):.2f})" if speaker else ""
-    log(f"YOU{tag}: {text}")
+    log(f"{'PICKUP' if PICKUP else 'YOU'}{tag}: {text}")
 
     def push_state(force=False):
         now = time.time()
         if force or now - last_state_push[0] > 0.3:
             last_state_push[0] = now
-            set_state("speaking" if player.first_audio_at else "thinking", text,
+            set_state("speaking" if player.first_audio_at else "thinking", shown,
                       strip_tags(clean_text("".join(reply_parts))), speaker)
 
     def on_sentence(s):
@@ -1114,6 +1198,22 @@ def run_turn(text, t_speech_end=None, speaker=None):
         finally:
             q.put(None)
 
+    # one per sentence with a laugh tag: start/end = wall times its audio is heard (Player.write's clock, so the gaps
+    # while the next sentence is fetched count), frac = how far into its spoken text the tag sits
+    marks = []
+
+    def gesture_now():
+        """"laugh" for LAUGH_SECS from the moment a laugh tag is heard (Beck, 2026-10-05: line it up with the voice)."""
+        now = time.time()
+        for m in marks:
+            if m["start"] is None:
+                continue
+            dur = (m["end"] - m["start"]) if m["end"] else m["chars"] * CHAR_SECS
+            t0 = m["start"] + m["frac"] * dur
+            if t0 <= now < t0 + LAUGH_SECS:
+                return "laugh"
+        return ""
+
     def tts_thread():
         chain = tts_chain()
         ahead = {}                              # sentence index -> Future(open_elevenlabs), opened while the previous one streams
@@ -1135,6 +1235,13 @@ def run_turn(text, t_speech_end=None, speaker=None):
                 if i is None:
                     break
                 s, prev, nxt = ctx_for(i)
+                lt = _LAUGH_TAG.search(s)
+                mark = None
+                if lt:
+                    spoken = len(strip_tags(s)) or 1
+                    mark = {"start": None, "end": None, "chars": spoken,
+                            "frac": min(1.0, len(strip_tags(s[:lt.start()])) / spoken)}
+                    marks.append(mark)
                 ok = False
                 for name, fn in chain:
                     if stop.is_set():
@@ -1147,8 +1254,12 @@ def run_turn(text, t_speech_end=None, speaker=None):
                         for chunk in gen:
                             if stop.is_set():
                                 break
-                            player.write(chunk)
+                            heard_at = player.write(chunk)
+                            if mark and mark["start"] is None:
+                                mark["start"] = heard_at
                             push_state()
+                        if mark and mark["start"] is not None:
+                            mark["end"] = player.play_end
                         dbg(f"tts[{name}] {len(s)} chars in {time.time() - t:.2f}s{' (prefetched)' if fut else ''}: {s[:100]!r}")
                         backend_used[0] = backend_used[0] or name
                         ok = True
@@ -1171,6 +1282,10 @@ def run_turn(text, t_speech_end=None, speaker=None):
     tt.start()
     # wait for completion, an interrupt (toggle) or cancel
     while tt.is_alive():
+        g = gesture_now()
+        if g != _gesture:
+            _gesture = g
+            push_state(force=True)
         if Ctl.toggle.is_set() or Ctl.cancel.is_set():
             stop.set()
             interrupted.set()
@@ -1181,6 +1296,7 @@ def run_turn(text, t_speech_end=None, speaker=None):
         tt.join(0.05)
     lt.join(2)
     tt.join(2)
+    _gesture = ""
 
     reply = strip_tags(clean_text("".join(reply_parts)))
     if not _mood and reply and reply.strip() not in ("NO_REPLY", "NO_REPLY."):
@@ -1188,9 +1304,11 @@ def run_turn(text, t_speech_end=None, speaker=None):
     if llm_err[0] and not reply:
         reply = f"Gateway error: {llm_err[0]}"
         log(f"ERROR: {llm_err[0]}")
-        notify(NAME, "dialog-error", 6000, reply)
-        emit({"type": "error", "message": reply})
-        set_state("error", text, reply, speaker)
+        TURN_FAILED = True
+        if not PICKUP:                          # q_pickup.py retries, and says so if it gives up
+            notify(NAME, "dialog-error", 6000, reply)
+            emit({"type": "error", "message": reply})
+        set_state("error", shown, reply, speaker)
         time.sleep(1.5)
         return reply, False
     emit({"type": "done", "reply": reply})
@@ -1207,7 +1325,7 @@ def run_turn(text, t_speech_end=None, speaker=None):
         timing.get("first_sentence", timing["stt_done"]) - t0,
         (fa - t0) if fa else -1,
         time.time() - t0, backend_used[0] or "none"))
-    set_state("idle", text, reply, speaker)
+    set_state("idle", shown, reply, speaker)
     return reply, interrupted.is_set()
 
 
@@ -1317,7 +1435,7 @@ def cmd_turn(args):
         start_timeout = VAD_START_TIMEOUT_S
         hint = "speak, or press again to send"
         while not Ctl.cancel.is_set():
-            wav = listen(start_timeout, hint)
+            wav = listen(start_timeout, hint, followup=start_timeout == CONVERSE_TIMEOUT_S)
             if wav is None:
                 break
             t_end = time.time()
@@ -1414,6 +1532,7 @@ def main():
     t.add_argument("--speaker", help="skip voice id and claim this profile name (testing)")
     t.add_argument("--json", action="store_true", help="typed turn from the Q chat panel: quiet, events only")
     t.add_argument("--image", action="append", default=[], help="(accepted from the panel; not sent yet)")
+    t.add_argument("--pickup", action="store_true", help="with --json: q_pickup.py reporting a finished agent")
     s = sub.add_parser("say")
     s.add_argument("text")
     e = sub.add_parser("enroll", help="add recent clips to a voice profile (no name = list profiles)")
@@ -1427,12 +1546,19 @@ def main():
         sys.exit("Q_GATEWAY_URL / Q_GATEWAY_TOKEN not set (see q_voice.env.example; q_voice.sh setup)")
     if args.cmd == "turn":
         if args.json:
-            global VIA, QUIET
+            global VIA, QUIET, PICKUP
             VIA, QUIET = "text", not SPEAK_TYPED
+            if args.pickup:
+                import q_pickup
+                if q_pickup.panel_busy():
+                    sys.exit(q_pickup.BUSY_EXIT)    # a turn started since q_pickup.py looked; it goes again later
+                PICKUP = "agent report"
             pidf = os.path.join(RUN, "typed.pid")
             os.makedirs(RUN, exist_ok=True)
             with open(pidf, "w") as f:
                 f.write(str(os.getpid()))
+            if PICKUP:
+                set_state("thinking", PICKUP)       # the panel stops sending now, not after playerctl
             try:
                 cmd_turn(args)
             finally:
@@ -1441,6 +1567,8 @@ def main():
                     os.remove(pidf)
                 except OSError:
                     pass
+            if PICKUP and TURN_FAILED:
+                sys.exit(1)
             return
         cmd_turn(args)
     else:

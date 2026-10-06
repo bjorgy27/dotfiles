@@ -421,6 +421,15 @@ Item {
     y: metrics.s(24)
     restColor: chat.gold
     restOpacity: 0.8
+    // the idle yawn: every 20 s while the panel is open and no typed turn is in flight, for as long as no message
+    // comes (Beck, 2026-10-06); only a message, sent or received, starts the wait over
+    idleYawn: chat.isOpen && !chat.busy
+    idleYawnSecs: 20
+    Connections {
+      target: messages
+      function onRowsInserted() { avatar.poke() }
+      function onDataChanged() { avatar.poke() }
+    }
     // click: show / hide the corner lion (shell.qml) on this screen; it outlives the panel
     HoverHandler { cursorShape: Qt.PointingHandCursor }
     TapHandler {

@@ -7,18 +7,25 @@ import "themes"
 // each reply with (stripped before anything is shown or spoken). Images: Beck's portraits, matted, all in one framing:
 // assets/lion/<pose>.png are 512px discs on a deep-space backdrop; assets/lion/clear/<pose>.png are the same lion on
 // transparent (framed: false), with the drawing's canvas left of and above the disc's square kept.
-//   listening -> default (looking at you)        transcribing / thinking -> default + sweeping ring
-//   reply streaming / speaking -> the mood pose, default for talk or no tag   error -> shrug
-//   after the turn the mood pose stays for restSecs, then back to restPose (default; it was side_default)
-// Only default moves, through assets/lion/shaders/face2.frag, warps of the drawing itself (maps in assets/lion/jaw/):
-// while Q speaks its mouth opens (the chin drops, both corners stay joined, the cheeks and muzzle stretch with it)
-// on the teeth from Beck's front_talk and laugh drawings and the tongue from front_talk, and its eyes and brows work
-// with the speech; all the time it is up, it blinks and glances and its ears flick; at rest it plays a little on its
-// own (see "the face" and "the ears").
+//   listening -> default (looking at you)        transcribing / thinking before the tag -> think + sweeping ring
+//   thinking after the tag -> the mood pose      speaking -> the mood pose if it talks (talkingPoses), else default
+//   error -> shrug     after the turn the mood pose stays for restSecs, then back to restPose (default)
+// The talking poses move through assets/lion/shaders/face4.frag, warps of the drawing itself (maps in
+// assets/lion/jaw/<pose>-*): while Q speaks the mouth opens (the chin drops, both corners stay joined, the cheeks and
+// muzzle stretch with it) on the teeth from Beck's front_talk and laugh drawings and the tongue from front_talk. A
+// talking pose with a face rig (faceRig: all of them) also works its eyes, brows and a mouth corner with the
+// speech, blinks and glances, flicks and perks its ears, and plays a little on its own while it shows (see "the face"
+// and "the ears"). Eager's, gloat's and the yawn's drawings (front_talk, side_talk, yawn) have their mouths open
+// already: they talk with their faces and ears only, the mouth exactly as drawn (jawRig stillMouth).
 Item {
   id: lion
 
   property real restSecs: 60
+  // the idle yawn (see "the idle yawn"): every idleYawnSecs while drowsy the portrait yawns for yawnSecs.
+  // Off unless the host turns it on (idleYawn: the chat panel, while it is open and between turns)
+  property bool idleYawn: false
+  property real idleYawnSecs: 20
+  property real yawnSecs: 3.5
   // the pose at rest, where the face's idle play shows. "side_default" (the aloof profile) was the rest pose until
   // 2026-10-05; set it back here to have it again.
   property string restPose: "default"
@@ -26,15 +33,74 @@ Item {
   readonly property string mood: root.voiceMood
   readonly property bool working: st === "transcribing" || (st === "thinking" && mood === "")
 
-  readonly property var moodPose: ({ laugh: "laugh", point: "point", shrug: "shrug", yawn: "yawn", talk: "default" })
+  // all eight of Beck's drawings get used (Beck, 2026-10-05): the profiles and the open-mouthed front one have moods too
+  readonly property var moodPose: ({ laugh: "laugh", point: "point", shrug: "shrug", yawn: "yawn", talk: "default",
+                                     smug: "side_default", gloat: "side_talk", eager: "front_talk",
+                                     blush: "blush", think: "think" })
   property bool resting: true
+  // the poses that talk with their own mouth (each has its maps, assets/lion/jaw/<pose>-*, and its numbers in jawRig).
+  // Every emotion gets its own, one at a time as Beck approves them (2026-10-05); a mood pose not in here hands over
+  // to the default while Q speaks. The reply's mood pose shows once the tag arrives, and after Q stops, for restSecs.
+  // At rest the portrait now and then flashes one of the other drawings for a few seconds (idleFlash), so they all get
+  // seen.
+  // A pose whose jawRig entry has stillMouth stays up while Q speaks, its eyes, brows and ears working and its mouth
+  // exactly as drawn: front_talk, drawn open-mouthed (Beck, 2026-10-05 22:52: "Dont make this one talk, it's mouth is
+  // already open"), side_talk (gloat), drawn mid-laugh (Beck, 2026-10-05 23:23: "It looks like the gloat is still
+  // talking with mouth open"), and yawn, drawn mid-yawn (Beck, 2026-10-05 23:51: "nope, the yawn will not talk").
+  property var talkingPoses: ["default", "blush", "point", "think", "shrug", "yawn", "front_talk", "side_default", "side_talk"]
+  // ...but with the varied tags (2026-10-06) eager, gloat and yawn came up so often that Q mostly spoke with a frozen
+  // mouth: while Q speaks a stillMouth pose hands over to the nearest drawing that talks, and shows again for the
+  // thinking before and the rest after
+  readonly property var stillStandIn: ({ front_talk: "default", side_talk: "side_default", yawn: "default" })
   readonly property string pose: {
     if (st === "error") return "shrug"
-    if (st === "listening" || working) return "default"
-    if (st === "thinking" || st === "speaking") return moodPose[mood] || "default"
-    if (resting || mood === "") return restPose
+    if (st === "listening") return "default"
+    if (st === "speaking") {
+      if (root.voiceGesture === "laugh") return "laugh"     // heard laughing (an audio tag): the laugh drawing
+      let p = moodPose[mood] || "default"
+      if (jawRig[p] && jawRig[p].stillMouth) return stillStandIn[p] || "default"
+      return talkingPoses.indexOf(p) >= 0 ? p : "default"
+    }
+    if (working) return "think"                       // decoding, or thinking before the reply's tag arrives
+    if (st === "thinking") return moodPose[mood] || "think"
+    if (yawning) return "yawn"
+    if (resting || mood === "") return idleFlash || restPose
     return moodPose[mood] || "default"
   }
+  property string idleFlash: ""
+  readonly property var flashPoses: ["laugh", "point", "shrug", "yawn", "side_default", "side_talk", "front_talk", "blush", "think"]
+  Timer {
+    id: flashClock
+    running: lion.visible && lion.st === "idle" && (lion.resting || lion.mood === "")
+    interval: 25000 + Math.random() * 20000
+    repeat: true
+    onTriggered: {
+      interval = 25000 + Math.random() * 20000
+      let p = lion.flashPoses[Math.floor(Math.random() * lion.flashPoses.length)]
+      lion.idleFlash = p
+      flashOff.restart()
+    }
+    onRunningChanged: if (!running) { flashOff.stop(); lion.idleFlash = "" }
+  }
+  Timer { id: flashOff; interval: 4000; onTriggered: lion.idleFlash = "" }
+
+  // ---- the idle yawn: while drowsy (idleYawn on, the portrait up, no turn) the yawn drawing shows for yawnSecs every
+  // idleYawnSecs (start to start), then whatever showed before, and keeps on for as long as drowsy lasts. Anything
+  // that ends drowsy (a turn, Q speaking, the panel shut) cuts it off at once. The host calls poke() when a message
+  // comes (the chat panel: sent or received), which cuts it off and starts the wait over; keys, typing and the mouse
+  // never touch it (Beck, 2026-10-06).
+  property bool yawning: false
+  readonly property bool drowsy: idleYawn && active && st === "idle"
+  function poke() {
+    yawning = false
+    yawnHold.stop()
+    if (drowsy) yawnWait.restart()
+    else yawnWait.stop()
+  }
+  onDrowsyChanged: poke()
+  Timer { id: yawnWait; interval: lion.idleYawnSecs * 1000; repeat: true
+          onTriggered: { lion.yawning = true; yawnHold.restart() } }
+  Timer { id: yawnHold; interval: lion.yawnSecs * 1000; onTriggered: lion.yawning = false }
 
   Timer { id: restTimer; interval: lion.restSecs * 1000; onTriggered: lion.resting = true }
   onStChanged: {
@@ -59,14 +125,16 @@ Item {
   readonly property real ringW: Math.max(2, Math.round(width * 0.03))
   readonly property bool active: visible && width > 0 && (!Window.window || Window.window.visible)
 
-  // ---- the jaw (default only): one springy opening, 0 shut .. 1 wide, may overshoot. Target = speech level x a
+  // ---- the jaw (the talking poses): one springy opening, 0 shut .. 1 wide, may overshoot. Target = speech level x a
   // syllable "chew" (3.8-6 Hz while the voice holds, restarted on every onset): each syllable opens and shuts again
   // before the next, so the jaw works through words even when the meter sits pinned at 1. Fast attack, a slightly
   // faster close, a little overshoot; each syllable picks a mouth shape between wide and round, and where the tongue
   // goes. The same pass drives the face while Q talks (stepTalkFace) and the ears' share of the speech.
-  readonly property bool talking: st === "speaking" && root.voiceLive && front.pose === "default"
+  readonly property bool talking: st === "speaking" && root.voiceLive && talkingPoses.indexOf(front.pose) >= 0
   property real jaw: 0
   property real jawVel: 0
+  property real talkEnv: talking ? 1 : 0     // eases in and out with the talking (an inverted pose's closing)
+  Behavior on talkEnv { NumberAnimation { duration: 280; easing.type: Easing.InOutSine } }
   property real chew: 0          // phase, radians
   property real chewHz: 4.6
   property real lvlPrev: 0
@@ -207,34 +275,155 @@ Item {
                              || lion.stress > 0.002 || lion.kickL > 0.002 || lion.kickR > 0.002)
     onTriggered: lion.stepJaw(Math.min(frameTime, 0.05))
   }
-  // the warp's field maps (256px data; a visible Image is what keeps its texture fed to the shader)
+  // the warp's field maps, one set per talking pose (256px data; a visible Image is what keeps its texture fed to the
+  // shader)
   component JawMap: Image {
+    property string pose
     property string part
     width: 1; height: 1; opacity: 0
     smooth: true; mipmap: false
-    source: Qt.resolvedUrl("assets/lion/jaw/default-" + part + ".png")
+    source: Qt.resolvedUrl("assets/lion/jaw/" + pose + "-" + part + ".png")
   }
-  JawMap { id: jawLow; part: "low" }
-  JawMap { id: jawUp; part: "up" }
-  JawMap { id: jawShape; part: "shape" }
-  JawMap { id: jawMask; part: "mask" }
-  // the teeth and the tongue, lifted from the drawings and laid along the mouth line: the upper row hangs below it,
-  // the lower row and the tongue stand above it (4 px per frame px over the effect's teethRect, so mipmapped)
-  JawMap { id: teethUpMap; part: "teeth-up"; mipmap: true }
-  JawMap { id: teethLowMap; part: "teeth-low"; mipmap: true }
-  JawMap { id: tongueImg; part: "tongue"; mipmap: true }
-  // the eyes' lid lines, measured off the drawing: one row per eye, 128 steps corner to corner
-  JawMap { id: lidsImg; part: "lids" }
-  readonly property bool mapsReady: [jawLow, jawUp, jawShape, jawMask, teethUpMap, teethLowMap, tongueImg, lidsImg]
-                                    .every(m => m.status === Image.Ready)
+  component JawSet: Item {
+    id: js
+    property string pose
+    // a pose that keeps its drawn mouth (jawRig stillMouth) has no jaw, teeth or tongue maps of its own: the shader
+    // never reads them (its opening stays 0), so the default's are bound
+    readonly property string mouth: lion.jawRig[pose] && lion.jawRig[pose].stillMouth ? "default" : pose
+    readonly property alias low: jawLow
+    readonly property alias up: jawUp
+    readonly property alias shape: jawShape
+    readonly property alias mask: jawMask
+    readonly property alias teethUp: teethUpMap
+    readonly property alias teethLow: teethLowMap
+    readonly property alias tongue: tongueImg
+    readonly property alias lids: lidsImg
+    JawMap { id: jawLow; pose: js.mouth; part: "low" }
+    JawMap { id: jawUp; pose: js.mouth; part: "up" }
+    JawMap { id: jawShape; pose: js.mouth; part: "shape" }
+    JawMap { id: jawMask; pose: js.mouth; part: "mask" }
+    // the teeth and the tongue, lifted from the drawings and laid along the mouth line: the upper row hangs below it,
+    // the lower row and the tongue stand above it (4 px per frame px over the effect's teethRect, so mipmapped)
+    JawMap { id: teethUpMap; pose: js.mouth; part: "teeth-up"; mipmap: true }
+    JawMap { id: teethLowMap; pose: js.mouth; part: "teeth-low"; mipmap: true }
+    JawMap { id: tongueImg; pose: js.mouth; part: "tongue"; mipmap: true }
+    // the eyes' lid lines, measured off the drawing: one row per eye, 128 steps corner to corner (a pose without a face
+    // rig, or whose eyes are shut in the drawing (yawn: eyeL off the frame), doesn't move its eyes, and only needs
+    // something bound: the default's)
+    JawMap { id: lidsImg; pose: lion.faceRig[js.pose] && lion.faceRig[js.pose].eyeL.x > -1000 ? js.pose : "default"; part: "lids" }
+    readonly property bool ready: [jawLow, jawUp, jawShape, jawMask, teethUpMap, teethLowMap, tongueImg, lidsImg]
+                                  .every(m => m.status === Image.Ready)
+  }
+  Repeater { id: jawSets; model: lion.talkingPoses; delegate: JawSet { required property string modelData; pose: modelData } }
+  function jawSet(p) {
+    for (let i = 0; i < jawSets.count; i++) if (jawSets.itemAt(i) && jawSets.itemAt(i).pose === p) return jawSets.itemAt(i)
+    return null
+  }
+  // each talking pose's numbers, from its maps' build (patches/q-panel-lion/tools: build_jaw.py prints pullRound;
+  // teethRect and drop are build_teeth.py's MOUTHS rect and drop, the drop as a unit vector)
+  // stillMouth: the pose keeps its drawn mouth while Q talks (no maps, no numbers)
+  // amp: the opening at the same jaw, against the maps' full one (1 if unset). Smug's profile shows its gap whole at
+  // the front, so it opens less
+  readonly property var jawRig: ({
+    default:      { pullRound: Qt.vector4d(3.34, 1.04, -2.52, 7.56), teethRect: Qt.vector4d(212, 222, 136, 92),
+                    drop: Qt.vector2d(-0.3162, 0.9487) },
+    blush:        { pullRound: Qt.vector4d(3.17, 1.49, -2.03, 7.63), teethRect: Qt.vector4d(176, 226, 144, 106),
+                    drop: Qt.vector2d(-0.2571, 0.9664) },
+    point:        { pullRound: Qt.vector4d(3.50, 0.13, 1.29, 7.84), teethRect: Qt.vector4d(250, 180, 136, 92),
+                    drop: Qt.vector2d(0.1630, 0.9866) },
+    think:        { pullRound: Qt.vector4d(3.42, -0.76, -1.57, 6.12), teethRect: Qt.vector4d(296, 196, 124, 106),
+                    drop: Qt.vector2d(-0.2490, 0.9685) },
+    shrug:        { pullRound: Qt.vector4d(3.35, 1.02, -1.99, 7.42), teethRect: Qt.vector4d(186, 190, 104, 88),
+                    drop: Qt.vector2d(-0.2596, 0.9657) },
+    yawn:         { stillMouth: 1 },
+    front_talk:   { stillMouth: 1 },
+    side_default: { pullRound: Qt.vector4d(3.47, 0.48, -1.75, 7.70), teethRect: Qt.vector4d(280, 196, 145, 124),
+                    drop: Qt.vector2d(-0.2216, 0.9751), amp: 0.6 },
+    side_talk:    { stillMouth: 1 }
+  })
+  // each face's numbers, in the 512 frame: the eyes from build_face.py (centre, axis cos/sin, corners along it, the lid
+  // table's decode; lookWin: where along the eye the glance moves the iris), the brows' bumps (centre, long axis
+  // pointing at the inner end for the near brow and the outer end for the far one; radii along / across), the smirk's
+  // mouth corner (xy, the bump's radius) and its way up. Blush's smirk is its grin's corner, drawn up and back. The ears
+  // (see "the ears"): pivot (the middle of the base, where the mane covers it) and axis to the tip, length and half-width
+  // at the base; earGain: rad per unit of earBase + earRest for the near and far ear (perked: + clockwise, - anticlockwise),
+  // then the share of each ear's flick. Blush's ears lie flat out to the sides (near: out left, its tip on the disc's
+  // rim; far: out right), so perked is up for both and at rest they sit about as drawn (earRest).
+  readonly property var faceRig: ({
+    default:      { eyeL: Qt.vector4d(257.71, 177.50, 0.8785, 0.4777), eyeR: Qt.vector4d(341.80, 204.14, 0.9870, 0.1605),
+                    eyeSpan: Qt.vector4d(-19.40, 24.40, -13.15, 14.15), lidsDec: Qt.vector2d(-6.708, 14.431),
+                    lookWinL: Qt.vector4d(0.07, 0.17, 0.62, 0.78), lookWinR: Qt.vector4d(0.05, 0.14, 0.60, 0.82),
+                    browL: Qt.vector4d(280.9, 155.0, 0.6115, 0.7912), browR: Qt.vector4d(349.1, 180.0, 0.9212, -0.3891),
+                    browSize: Qt.vector4d(37, 19, 24, 13), smirk: Qt.vector3d(326.5, 288.5, 14), smirkDir: Qt.vector2d(0.575, -0.818),
+                    // the far ear moves at a third of the near one's: its warp reaches into the mane round it and bent the hair
+                    // (Beck, 2026-10-05)
+                    earL: Qt.vector4d(198, 110, -0.272, -0.962), earR: Qt.vector4d(398, 182, 0.963, -0.267),
+                    earSize: Qt.vector4d(55, 37, 56, 32), earGain: Qt.vector4d(0.1, -0.035, 1, 0.35), earRest: 0 },
+    blush:        { eyeL: Qt.vector4d(224.66, 187.41, 0.9780, 0.2088), eyeR: Qt.vector4d(320.01, 211.57, 0.9950, 0.1002),
+                    eyeSpan: Qt.vector4d(-26.15, 17.65, -19.15, 14.65), lidsDec: Qt.vector2d(-7.013, 13.701),
+                    lookWinL: Qt.vector4d(0.06, 0.14, 0.62, 0.82), lookWinR: Qt.vector4d(0.07, 0.15, 0.60, 0.82),
+                    browL: Qt.vector4d(240.0, 158.0, 0.9442, 0.3293), browR: Qt.vector4d(321.0, 182.0, 0.9363, -0.3511),
+                    browSize: Qt.vector4d(38, 17, 22, 13), smirk: Qt.vector3d(189.5, 256.0, 14), smirkDir: Qt.vector2d(-0.45, -0.893),
+                    earL: Qt.vector4d(145, 128, -0.9963, -0.0830), earR: Qt.vector4d(379, 187, 0.9985, 0.0555),
+                    earSize: Qt.vector4d(108, 34, 55, 30), earGain: Qt.vector4d(0.06, -0.06, 0.5, 0.5), earRest: 0.35 },
+    point:        { eyeL: Qt.vector4d(251.82, 174.04, 0.9963, -0.0862), eyeR: Qt.vector4d(331.16, 161.34, 0.9968, -0.0804),
+                    eyeSpan: Qt.vector4d(-20.15, 21.65, -14.15, 11.15), lidsDec: Qt.vector2d(-5.719, 11.578),
+                    lookWinL: Qt.vector4d(0.07, 0.17, 0.62, 0.78), lookWinR: Qt.vector4d(0.05, 0.14, 0.60, 0.82),
+                    browL: Qt.vector4d(263, 137, 0.814, 0.581), browR: Qt.vector4d(328, 143, 0.88, -0.475),
+                    browSize: Qt.vector4d(34, 15, 22, 12), smirk: Qt.vector3d(263, 221, 14), smirkDir: Qt.vector2d(-0.5, -0.866),
+                    earL: Qt.vector4d(140, 165, -0.955, -0.297), earR: Qt.vector4d(378, 160, 0.538, -0.842),
+                    earSize: Qt.vector4d(62, 30, 56, 22), earGain: Qt.vector4d(0.06, -0.05, 0.5, 0.35), earRest: 0.3 },
+    think:        { eyeL: Qt.vector4d(276.08, 186.39, 0.9843, 0.1766), eyeR: Qt.vector4d(-4096.00, -4096.00, 1.0000, 0.0000),
+                    eyeSpan: Qt.vector4d(-29.65, 26.65, -1.00, 1.00), lidsDec: Qt.vector2d(-7.182, 14.936),
+                    lookWinL: Qt.vector4d(0.07, 0.17, 0.62, 0.78), lookWinR: Qt.vector4d(0.05, 0.14, 0.60, 0.82),
+                    browL: Qt.vector4d(285.0, 160.0, 0.9060, 0.4230), browR: Qt.vector4d(342.0, 168.0, 0.5, -0.866),
+                    browSize: Qt.vector4d(38, 15, 16, 10), smirk: Qt.vector3d(315.5, 263.0, 14), smirkDir: Qt.vector2d(-0.45, -0.893),
+                    earL: Qt.vector4d(165, 150, -0.92, -0.39), earR: Qt.vector4d(0, 0, 1, 0),
+                    earSize: Qt.vector4d(98, 30, 1, 1), earGain: Qt.vector4d(0.06, 0, 0.5, 0), earRest: 0.2 },
+    shrug:        { eyeL: Qt.vector4d(208.45, 160.12, 0.9770, 0.2133), eyeR: Qt.vector4d(284.30, 178.74, 0.9865, 0.1635),
+                    eyeSpan: Qt.vector4d(-14.15, 15.40, -12.15, 11.90), lidsDec: Qt.vector2d(-3.821, 11.028),
+                    lookWinL: Qt.vector4d(0.07, 0.17, 0.62, 0.78), lookWinR: Qt.vector4d(0.05, 0.14, 0.60, 0.82),
+                    browL: Qt.vector4d(215.0, 136.0, 0.9400, 0.3300), browR: Qt.vector4d(287.0, 157.0, 0.8900, -0.4500),
+                    browSize: Qt.vector4d(34, 14, 22, 11), smirk: Qt.vector3d(273.5, 230.5, 12), smirkDir: Qt.vector2d(0.6, -0.8),
+                    earL: Qt.vector4d(155, 140, -0.707, -0.707), earR: Qt.vector4d(330, 160, 0.6, -0.8),
+                    earSize: Qt.vector4d(55, 28, 40, 20), earGain: Qt.vector4d(0.1, -0.035, 1, 0.35), earRest: 0 },
+    yawn:         { eyeL: Qt.vector4d(-4096.00, -4096.00, 1.0000, 0.0000), eyeR: Qt.vector4d(-4096.00, -4096.00, 1.0000, 0.0000),
+                    eyeSpan: Qt.vector4d(-1.00, 1.00, -1.00, 1.00), lidsDec: Qt.vector2d(0.000, 1.000),
+                    lookWinL: Qt.vector4d(0.07, 0.17, 0.62, 0.78), lookWinR: Qt.vector4d(0.05, 0.14, 0.60, 0.82),
+                    browL: Qt.vector4d(280.0, 142.0, 0.9000, 0.4000), browR: Qt.vector4d(372.0, 167.0, 0.9000, -0.4000),
+                    browSize: Qt.vector4d(32, 13, 22, 11), smirk: Qt.vector3d(254.0, 238.0, 12), smirkDir: Qt.vector2d(-0.5, -0.866),
+                    earL: Qt.vector4d(215, 150, -0.64, -0.77), earR: Qt.vector4d(430, 185, 0.85, -0.53),
+                    earSize: Qt.vector4d(75, 32, 50, 25), earGain: Qt.vector4d(0.1, -0.035, 1, 0.35), earRest: 0 },
+    front_talk:   { eyeL: Qt.vector4d(217.29, 197.74, 0.9466, 0.3223), eyeR: Qt.vector4d(321.41, 210.18, 0.9997, -0.0255),
+                    eyeSpan: Qt.vector4d(-19.90, 23.15, -19.15, 19.90), lidsDec: Qt.vector2d(-7.417, 15.840),
+                    lookWinL: Qt.vector4d(0.07, 0.17, 0.62, 0.78), lookWinR: Qt.vector4d(0.05, 0.14, 0.60, 0.82),
+                    browL: Qt.vector4d(228.0, 163.0, 0.8700, 0.4900), browR: Qt.vector4d(318.0, 177.0, 0.9170, -0.3990),
+                    browSize: Qt.vector4d(34, 13, 26, 12), smirk: Qt.vector3d(300.0, 301.0, 13), smirkDir: Qt.vector2d(0.6, -0.8),
+                    earL: Qt.vector4d(165, 150, -0.6, -0.8), earR: Qt.vector4d(395, 185, 0.6, -0.8),
+                    earSize: Qt.vector4d(70, 30, 70, 28), earGain: Qt.vector4d(0.08, -0.08, 1, 0.6), earRest: 0 },
+    side_default: { eyeL: Qt.vector4d(283.89, 180.08, 0.9758, 0.2186), eyeR: Qt.vector4d(-4096.00, -4096.00, 1.0000, 0.0000),
+                    eyeSpan: Qt.vector4d(-31.65, 26.40, -1.00, 1.00), lidsDec: Qt.vector2d(-6.500, 12.677),
+                    lookWinL: Qt.vector4d(0.07, 0.17, 0.62, 0.78), lookWinR: Qt.vector4d(0.05, 0.14, 0.60, 0.82),
+                    browL: Qt.vector4d(292.0, 148.0, 0.8500, 0.5300), browR: Qt.vector4d(-500, -500, 1, 0),
+                    browSize: Qt.vector4d(34, 13, 1, 1), smirk: Qt.vector3d(290.5, 233.0, 13), smirkDir: Qt.vector2d(-0.45, -0.893),
+                    earL: Qt.vector4d(170, 155, -0.93, -0.37), earR: Qt.vector4d(0, 0, 1, 0),
+                    earSize: Qt.vector4d(100, 30, 1, 1), earGain: Qt.vector4d(0.06, 0, 0.5, 0), earRest: 0.2 },
+    side_talk:    { eyeL: Qt.vector4d(292.28, 169.02, 0.9877, 0.1562), eyeR: Qt.vector4d(-4096.00, -4096.00, 1.0000, 0.0000),
+                    eyeSpan: Qt.vector4d(-31.15, 24.90, -1.00, 1.00), lidsDec: Qt.vector2d(-7.670, 15.722),
+                    lookWinL: Qt.vector4d(0.07, 0.17, 0.62, 0.78), lookWinR: Qt.vector4d(0.05, 0.14, 0.60, 0.82),
+                    browL: Qt.vector4d(292.0, 135.0, 0.8800, 0.4700), browR: Qt.vector4d(-500, -500, 1, 0),
+                    browSize: Qt.vector4d(36, 13, 1, 1), smirk: Qt.vector3d(305.5, 228.0, 13), smirkDir: Qt.vector2d(-0.45, -0.893),
+                    earL: Qt.vector4d(175, 160, -0.93, -0.37), earR: Qt.vector4d(0, 0, 1, 0),
+                    earSize: Qt.vector4d(100, 30, 1, 1), earGain: Qt.vector4d(0.06, 0, 0.5, 0), earRest: 0.2 }
+  })
 
-  // ---- the face (default only), all of it the drawing's own pixels moved by face.frag: blinks every 3-6 s (now and
+  // ---- the face (the poses in faceRig), all of it the drawing's own pixels moved by face4.frag: blinks every 3-6 s (now and
   // then a double) and, while Q isn't talking, an idle play of small moves 2.5-7.5 s apart, one at a time: a glance
   // away and back, a skeptical brow, a slow pleased narrowing, a faint smirk at the far corner of the mouth, the brows
   // lifted as if amused, a double blink. While Q talks the talking face above has the eyes and brows, beside the
   // blinks. Both lions (the panel's and the corner's) take their idle moments from a hash of the wall clock, so they
-  // move as one. Timers run only while the default is on screen.
-  readonly property bool faceOn: active && front.pose === "default" && mapsReady
+  // move as one. Timers run only while such a pose is on screen.
+  readonly property bool faceOn: active && !!faceRig[front.pose] && !!front.maps && front.maps.ready
   property real blink: 0         // 0 open .. 1 shut
   property real lookX: 0         // glance along the eyes, -1 .. 1
   property real lookY: 0         // and across them (+ down)
@@ -347,7 +536,7 @@ Item {
     blink = 0; lookX = 0; lookY = 0; smug = 0; browUp = 0; skeptic = 0; smirk = 0; earFlickL = 0; earFlickR = 0
   }
 
-  // ---- the ears (default only): each turns a few degrees about its base, the drawing's own ear moved (face2.frag).
+  // ---- the ears (the poses in faceRig): each turns a few degrees about its base, the drawing's own ear moved (face4.frag).
   // Perked (up and forward) while Q listens to Beck, a little while it thinks, with the emphasis while it talks; at
   // rest they settle back, relaxed. Each ear flicks or twitches on its own clock, idle or talking; both lions share
   // the clocks (the wall clock's hash, like the face's).
@@ -392,7 +581,12 @@ Item {
 
   // ---- crossfade: the new pose fades in over the old one, then the old one goes (on the discs it is already hidden
   // under the new one; the cut-outs differ in outline, so it has to fade from behind too)
-  function src(p) { return Qt.resolvedUrl("assets/lion/" + (framed ? "" : "clear/") + p + ".png") }
+  // the corner lion needs a cut-out (clear/); poses without one yet show the default cut-out there
+  readonly property var clearPoses: ["default", "laugh", "point", "shrug", "side_default", "yawn", "blush", "think", "front_talk", "side_talk"]
+  function src(p) {
+    if (!framed && clearPoses.indexOf(p) < 0) p = "default"
+    return Qt.resolvedUrl("assets/lion/" + (framed ? "" : "clear/") + p + ".png")
+  }
   property Pose front: poseA
   function show(p) {
     if (front.pose === p) return
@@ -408,7 +602,7 @@ Item {
   // in-between pose never flashes
   onPoseChanged: settle.restart()
   Timer { id: settle; interval: 40; onTriggered: lion.show(lion.pose) }
-  Component.onCompleted: { poseA.pose = pose; poseA.opacity = 1 }
+  Component.onCompleted: { poseA.pose = pose; poseA.opacity = 1; poke() }
   SequentialAnimation {
     id: fade
     property Item over: null
@@ -429,13 +623,19 @@ Item {
   }
 
   // one pose's image, in the 512 frame of the discs; a cut-out also spills left and up by its pads (its size - 512).
-  // The default is drawn through the face shader while it shows.
+  // A talking pose is drawn through the face shader while it shows (with its face, if it has a faceRig).
   component Pose: Image {
     id: img
     property string pose: ""
     readonly property real k: portrait.width / 512
     readonly property real padX: status === Image.Ready ? implicitWidth - 512 : 0
     readonly property real padY: status === Image.Ready ? implicitHeight - 512 : 0
+    readonly property var maps: lion.talkingPoses.indexOf(pose) >= 0 && jawSets.count > 0 ? lion.jawSet(pose) : null
+    readonly property var jset: maps || lion.jawSet("default")      // (bound even while it hands over to a still pose)
+    readonly property bool stillMouth: !!lion.jawRig[pose] && !!lion.jawRig[pose].stillMouth
+    readonly property var rig: lion.jawRig[pose] && !stillMouth ? lion.jawRig[pose] : lion.jawRig["default"]
+    readonly property var fr: lion.faceRig[pose] || null
+    readonly property bool face: !!fr && !!maps
     x: -padX * k; y: -padY * k
     width: (512 + padX) * k; height: (512 + padY) * k
     source: pose ? lion.src(pose) : ""
@@ -443,50 +643,59 @@ Item {
     opacity: 0
     visible: opacity > 0
 
-    layer.enabled: pose === "default" && visible && lion.mapsReady
+    layer.enabled: !!maps && maps.ready && visible
     layer.smooth: true
     layer.textureSize: Qt.size(Math.ceil(width * 1.5), Math.ceil(height * 1.5))
     layer.effect: ShaderEffect {
-      readonly property real jaw: Math.max(0, lion.jaw)
+      // a pose drawn with its mouth wide open and maps that close it (jawRig invert: yawn's until 2026-10-05 23:51) closes
+      // part way while Q talks and each syllable opens it again to the drawing. One that keeps its drawn mouth
+      // (stillMouth: eager, gloat, yawn) never moves it: the shader stops before the jaw
+      readonly property real amp: img.rig.amp || 1
+      readonly property real jaw: img.stillMouth ? 0
+                                  : img.rig.invert ? lion.talkEnv * Math.max(0, Math.min(1, 1 - amp * lion.jaw)) : amp * Math.max(0, lion.jaw)
       readonly property real shape: Math.max(-1, Math.min(1, 0.6 * lion.shape))
       readonly property real aa: 0.8 * 512 / Math.max(64, portrait.width)
-      readonly property vector4d pullRound: Qt.vector4d(3.34, 1.04, -2.52, 7.56)    // from the jaw maps' build
+      readonly property vector4d pullRound: img.rig.pullRound                       // from the jaw maps' build
       readonly property vector4d frame: Qt.vector4d(img.padX, img.padY, 512 + img.padX, 512 + img.padY)
       readonly property color cavTop: "#2a0610"
       readonly property color cavDeep: "#4a0f1f"
-      readonly property var mapLow: jawLow
-      readonly property var mapUp: jawUp
-      readonly property var mapShape: jawShape
-      readonly property var mapMask: jawMask
-      readonly property vector4d teethRect: Qt.vector4d(212, 222, 136, 92)          // from the teeth maps' build
-      readonly property vector2d drop: Qt.vector2d(-0.3162, 0.9487)
-      readonly property var teethUp: teethUpMap
-      readonly property var teethLow: teethLowMap
+      readonly property var mapLow: img.jset.low
+      readonly property var mapUp: img.jset.up
+      readonly property var mapShape: img.jset.shape
+      readonly property var mapMask: img.jset.mask
+      readonly property vector4d teethRect: img.rig.teethRect                       // from the teeth maps' build
+      readonly property vector2d drop: img.rig.drop
+      readonly property var teethUp: img.jset.teethUp
+      readonly property var teethLow: img.jset.teethLow
       // the tongue: its top this many px above the lower lip (the opening is ~21 px at jaw 1; past 14.5 the upper
       // teeth hide it anyway); lying low it shows its light front over the teeth and its back foreshortened, raised
       // more of its back and less of its front
       readonly property vector4d tongue: Qt.vector4d(Math.max(0.5, Math.min(14.5, lion.tongue * jaw * 21)),
                                                      -5 - 8 * Math.max(0, lion.tongue - 0.45), 0.55 + 0.5 * lion.tongue, 0)
-      readonly property var tongueMap: tongueImg
-      // the eyes and brows, from the face maps' build (build_face.py): centres and axes in the 512 frame
-      readonly property vector4d eyeL: Qt.vector4d(257.71, 177.50, 0.8785, 0.4777)
-      readonly property vector4d eyeR: Qt.vector4d(341.80, 204.14, 0.9870, 0.1605)
-      readonly property vector4d eyeSpan: Qt.vector4d(-19.40, 24.40, -13.15, 14.15)
-      readonly property vector4d lookWinL: Qt.vector4d(0.07, 0.17, 0.62, 0.78)
-      readonly property vector4d lookWinR: Qt.vector4d(0.05, 0.14, 0.60, 0.82)
-      readonly property vector2d lidsDec: Qt.vector2d(-6.708, 14.431)
-      readonly property var lids: lidsImg
-      readonly property vector4d browL: Qt.vector4d(280.9, 155.0, 0.6115, 0.7912)
-      readonly property vector4d browR: Qt.vector4d(349.1, 180.0, 0.9212, -0.3891)
-      readonly property vector4d browSize: Qt.vector4d(37, 19, 24, 13)
-      readonly property vector2d smirkDir: Qt.vector2d(0.575, -0.818)
-      // the ears, measured off the drawing: pivot (the middle of the base, where the mane covers it), axis to the tip;
-      // a turn of 1 is ~6 degrees, perked: the near ear (pointing up) clockwise, the far one (pointing out) its tip up
-      readonly property vector4d earL: Qt.vector4d(198, 110, -0.272, -0.962)
-      readonly property vector4d earR: Qt.vector4d(398, 182, 0.963, -0.267)
-      readonly property vector4d earSize: Qt.vector4d(55, 37, 56, 32)
-      readonly property vector4d ears: Qt.vector4d(0.1 * (lion.earBaseL + 0.8 * lion.kickL), -0.1 * (lion.earBaseR + 0.8 * lion.kickR),
-                                                   lion.earFlickL, lion.earFlickR)
+      readonly property var tongueMap: img.jset.tongue
+      // the eyes, brows and smirk corner, from the pose's faceRig. A pose without one keeps its face still: its eyes
+      // sit off the frame (the shader leaves them be) and every other move below is zero
+      readonly property var f: img.fr || lion.faceRig["default"]
+      readonly property vector4d eyeL: img.face ? f.eyeL : Qt.vector4d(-4096, -4096, 1, 0)
+      readonly property vector4d eyeR: img.face ? f.eyeR : Qt.vector4d(-4096, -4096, 1, 0)
+      readonly property vector4d eyeSpan: f.eyeSpan
+      readonly property vector4d lookWinL: f.lookWinL
+      readonly property vector4d lookWinR: f.lookWinR
+      readonly property vector2d lidsDec: f.lidsDec
+      readonly property var lids: img.jset.lids
+      readonly property vector4d browL: f.browL
+      readonly property vector4d browR: f.browR
+      readonly property vector4d browSize: f.browSize
+      readonly property vector2d smirkDir: f.smirkDir
+      // the ears, from the pose's faceRig (the default's: the near ear points up, so perked is clockwise, the far one
+      // points out, its tip up); on a disc the turn fades out at the rim (rim: the disc's radius, 0 on a cut-out)
+      readonly property vector4d earL: f.earL
+      readonly property vector4d earR: f.earR
+      readonly property vector4d earSize: f.earSize
+      readonly property vector4d ears: !img.face ? Qt.vector4d(0, 0, 0, 0)
+                                       : Qt.vector4d(f.earGain.x * (lion.earBaseL + f.earRest + 0.8 * lion.kickL), f.earGain.y * (lion.earBaseR + f.earRest + 0.8 * lion.kickR),
+                                                     f.earGain.z * lion.earFlickL, f.earGain.w * lion.earFlickR)
+      readonly property real rim: lion.framed ? 256 : 0
       // what the moves add up to: narrowing (pleased), widening (emphasis, a lifted brow), the skeptical brow's eye
       // a touch wider and the other a touch narrower
       readonly property real narrow: Math.min(1, lion.smug + 0.75 * lion.hush)
@@ -494,13 +703,13 @@ Item {
       readonly property real skFar: Math.max(0, lion.skeptic)
       readonly property real skNear: Math.max(0, -lion.skeptic)
       readonly property real lift: lion.browUp + 0.7 * lion.emph + 0.6 * lion.stress - 0.25 * narrow
-      readonly property vector4d lidL: Qt.vector4d(0.84 * lion.blink + 0.26 * narrow - 0.12 * widen - 0.1 * skNear + 0.08 * skFar,
+      readonly property vector4d lidL: !img.face ? Qt.vector4d(0, 0, 0, 0) : Qt.vector4d(0.84 * lion.blink + 0.26 * narrow - 0.12 * widen - 0.1 * skNear + 0.08 * skFar,
                                                    0.16 * lion.blink + 0.12 * narrow, 2.6 * lion.lookX, 0.7 * lion.lookY)
-      readonly property vector4d lidR: Qt.vector4d(0.84 * lion.blink + 0.26 * narrow - 0.12 * widen - 0.1 * skFar + 0.08 * skNear + 0.06 * lion.smirk,
+      readonly property vector4d lidR: !img.face ? Qt.vector4d(0, 0, 0, 0) : Qt.vector4d(0.84 * lion.blink + 0.26 * narrow - 0.12 * widen - 0.1 * skFar + 0.08 * skNear + 0.06 * lion.smirk,
                                                    0.16 * lion.blink + 0.12 * narrow, 1.7 * lion.lookX, 0.5 * lion.lookY)
-      readonly property vector4d brows: Qt.vector4d(3.0 * lift + 3.4 * skNear, 2.5 * lift + 2.9 * skFar, -1.4 * skNear, 1.3 * skFar)
-      readonly property vector4d smirk: Qt.vector4d(326.5, 288.5, 14, 3.4 * lion.smirk)
-      fragmentShader: Qt.resolvedUrl("assets/lion/shaders/face2.frag.qsb")
+      readonly property vector4d brows: !img.face ? Qt.vector4d(0, 0, 0, 0) : Qt.vector4d(3.0 * lift + 3.4 * skNear, 2.5 * lift + 2.9 * skFar, -1.4 * skNear, 1.3 * skFar)
+      readonly property vector4d smirk: Qt.vector4d(f.smirk.x, f.smirk.y, f.smirk.z, img.face && !img.stillMouth ? 3.4 * lion.smirk : 0)
+      fragmentShader: Qt.resolvedUrl("assets/lion/shaders/face4.frag.qsb")
     }
   }
 

@@ -443,6 +443,7 @@ Scope {
   property string voiceText: ""
   property string voiceReply: ""
   property string voiceMood: ""      // the reply's [lion:<mood>] tag, see MOODS in q_voice.py (LionAvatar)
+  property string voiceGesture: ""   // "laugh" while Q is heard laughing (an audio tag), see q_voice.py gesture_now
   // the corner lion: click the chat panel's portrait to show Q large in the bottom right of that screen; it stays
   // after the panel closes until the portrait is clicked again
   property bool qCorner: false
@@ -469,16 +470,18 @@ Scope {
   readonly property bool voiceLive: voiceState === "listening" || voiceState === "speaking"
   function pushVoiceLevel(v) { voiceLevel = v; let h = voiceLevels.slice(1); h.push(v); voiceLevels = h }
   readonly property string voiceMeterPy: "import sys,struct,math\nb=sys.stdin.buffer\nwhile True:\n d=b.read(1600)\n if not d: break\n n=len(d)//2\n s=struct.unpack('<%dh'%n,d[:n*2])\n r=math.sqrt(sum(x*x for x in s)/max(n,1))/32768.0\n print(min(1.0,r*7))\n"
+  // Stopping a Process only signals its bash, so the pipeline is backgrounded under a trap that kills bash's children:
+  // a bare `pw-record | python3` outlived it, kept the headset's mic open and pinned it in call mode (2026-10-05).
   // Two fixed meters instead of one that swaps its command: restarting a Process from onVoiceStateChanged ran
   // before `command` re-evaluated, so "speaking" kept metering the mic.
   Process {
     running: root.voiceEnabled && root.voiceState === "listening"
-    command: ["bash", "-c", "pw-record --format s16 --rate 16000 --channels 1 --latency 50ms - 2>/dev/null | python3 -u -c \"" + root.voiceMeterPy + "\""]
+    command: ["bash", "-c", "trap 'pkill -P $$' EXIT TERM INT; pw-record --format s16 --rate 16000 --channels 1 --latency 50ms - 2>/dev/null | python3 -u -c \"" + root.voiceMeterPy + "\" & wait"]
     stdout: SplitParser { onRead: data => { let v = parseFloat(data); if (!isNaN(v)) root.pushVoiceLevel(v) } }
   }
   Process {
     running: root.voiceEnabled && root.voiceState === "speaking"
-    command: ["bash", "-c", "pw-record -P '{ stream.capture.sink = true }' --format s16 --rate 16000 --channels 1 --latency 50ms - 2>/dev/null | python3 -u -c \"" + root.voiceMeterPy + "\""]
+    command: ["bash", "-c", "trap 'pkill -P $$' EXIT TERM INT; pw-record -P '{ stream.capture.sink = true }' --format s16 --rate 16000 --channels 1 --latency 50ms - 2>/dev/null | python3 -u -c \"" + root.voiceMeterPy + "\" & wait"]
     stdout: SplitParser { onRead: data => { let v = parseFloat(data); if (!isNaN(v)) root.pushVoiceLevel(v) } }
   }
   // soft motion while decoding / thinking; decay otherwise
@@ -509,6 +512,7 @@ Scope {
     root.voiceText = s.text ?? ""
     root.voiceReply = s.reply ?? ""
     root.voiceMood = s.mood ?? ""
+    root.voiceGesture = s.gesture ?? ""
     root.voiceState = s.state ?? "idle"
     if (root.voiceState !== "idle") {
       voiceCloseTimer.stop()

@@ -19,6 +19,9 @@ Only the machine running the gateway has the openclaw CLI. Q_AGENTS_MIRROR, if
 set, is a shell command that gets each new agents.json on stdin, run off the
 poll loop and retried until it succeeds, so a machine without openclaw (the
 laptop) can be fed over SSH from this one; see scripts/q_agents_recv.sh.
+
+Each poll also drives the agent pickup (q_pickup.py): agents the panel spawned
+without a completion announce are reported through an ordinary panel turn.
 """
 
 import argparse
@@ -29,6 +32,8 @@ import subprocess
 import sys
 import threading
 import time
+
+import q_pickup
 
 POLL_TIMEOUT = 25          # openclaw is a node CLI; a cold start is not instant
 MIRROR = os.environ.get("Q_AGENTS_MIRROR", "")
@@ -240,6 +245,8 @@ def main():
         if last is not None:
             mirror.push(last)
     pushed = time.monotonic()
+    pickup = q_pickup.Pickup() if q_pickup.ENABLED and not args.once else None
+    pickup_err = None
 
     failing = False
     while True:
@@ -256,6 +263,14 @@ def main():
             elif mirror and time.monotonic() - pushed > MIRROR_REFRESH:
                 mirror.push(text)   # the other machine may have rebooted and lost its copy
                 pushed = time.monotonic()
+            if pickup:
+                try:                # a pickup bug must never stop the agent list
+                    pickup.tick(tasks, int(time.time() * 1000))
+                    pickup_err = None
+                except Exception as exc:                          # noqa: BLE001
+                    if str(exc) != pickup_err:
+                        log("pickup %s: %s" % (type(exc).__name__, exc))
+                    pickup_err = str(exc)
             if failing:
                 log("openclaw recovered, %d agents" % len(agents))
                 failing = False
