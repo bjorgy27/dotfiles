@@ -373,7 +373,7 @@ Item {
   // (it points up) and clockwise for the far one (it points out to the right, so out is its tip dipping)
   function earFlick(fl, k, salt, out) {
     let r = i => hash(k * 7 + salt + i)
-    fl.amp = out * (r(0) < 0.75 ? 1 : -0.7) * (r(1) < 0.35 ? 0.05 + 0.03 * r(2) : 0.1 + 0.06 * r(2))
+    fl.amp = out * (r(0) < 0.75 ? 1 : -0.7) * (r(1) < 0.35 ? 0.07 + 0.04 * r(2) : 0.15 + 0.08 * r(2))
     fl.loops = r(3) < 0.2 ? 2 : 1
     fl.restart()
   }
@@ -481,11 +481,11 @@ Item {
       readonly property vector4d browSize: Qt.vector4d(37, 19, 24, 13)
       readonly property vector2d smirkDir: Qt.vector2d(0.575, -0.818)
       // the ears, measured off the drawing: pivot (the middle of the base, where the mane covers it), axis to the tip;
-      // a turn of 1 is ~5 degrees, perked: the near ear (pointing up) clockwise, the far one (pointing out) its tip up
+      // a turn of 1 is ~6 degrees, perked: the near ear (pointing up) clockwise, the far one (pointing out) its tip up
       readonly property vector4d earL: Qt.vector4d(198, 110, -0.272, -0.962)
       readonly property vector4d earR: Qt.vector4d(398, 182, 0.963, -0.267)
       readonly property vector4d earSize: Qt.vector4d(55, 37, 56, 32)
-      readonly property vector4d ears: Qt.vector4d(0.085 * (lion.earBaseL + 0.8 * lion.kickL), -0.085 * (lion.earBaseR + 0.8 * lion.kickR),
+      readonly property vector4d ears: Qt.vector4d(0.1 * (lion.earBaseL + 0.8 * lion.kickL), -0.1 * (lion.earBaseR + 0.8 * lion.kickR),
                                                    lion.earFlickL, lion.earFlickR)
       // what the moves add up to: narrowing (pleased), widening (emphasis, a lifted brow), the skeptical brow's eye
       // a touch wider and the other a touch narrower
