@@ -204,6 +204,60 @@ Item {
     return n > 0 && messages.get(n - 1).role === "q" && messages.get(n - 1).pending ? n - 1 : -1
   }
 
+  // ---- LaTeX in Q's replies ($...$ or \(...\) inline, $$...$$ or \[...\] on its own line): typeset by
+  //      scripts/q_eq.py into transparent PNGs in ink colour, cached by a hash of the source, shown as inline images.
+  //      Until a picture is ready (or if it can't be typeset) the source shows as text. q_voice.py never speaks it.
+  readonly property string eqDir: (Quickshell.env("XDG_CACHE_HOME") || (root.home + "/.cache")) + "/q-voice/eq"
+  readonly property int eqDpi: Math.round(metrics.s(15) * 6.4 * 2)   // 12pt = the body's 15px, drawn at 2x for sharpness
+  property var eqSizes: ({})        // key -> [w, h] in logical px, or false when it failed
+  property var eqWant: []           // queued {key, tex, display}; plain JS list, changing it notifies nothing
+  function eqParts(s) {             // [{text}, {text, tex, display}, ...]; a lone $ (prices) stays text
+    let out = [], last = 0, m
+    let rx = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|(^|[^\\$\w])\$(?=\S)([^$\n]*?[^\s\\])\$(?![\w$])/g
+    while ((m = rx.exec(s)) !== null) {
+      let at = m.index + (m[4] || "").length
+      if (at > last) out.push({ text: s.slice(last, at) })
+      out.push({ text: s.slice(at, rx.lastIndex), tex: (m[1] || m[2] || m[3] || m[5]).trim(), display: !!(m[1] || m[2]) })
+      last = rx.lastIndex
+    }
+    if (last < s.length) out.push({ text: s.slice(last) })
+    return out
+  }
+  function eqHtml(p, maxW) {        // the <img> for a math part, or "" while it's not ready
+    let key = Qt.md5((p.display ? "D|" : "I|") + chat.ink + "|" + chat.eqDpi + "|" + p.tex)
+    let sz = chat.eqSizes[key]
+    if (sz === undefined) {
+      if (!chat.eqWant.some(q => q.key === key)) chat.eqWant.push({ key: key, tex: p.tex, display: p.display })
+      Qt.callLater(chat.eqNext)
+    }
+    if (!sz) return ""
+    let k = Math.min(1, maxW / sz[0])
+    return "<img src=\"file://" + chat.eqDir + "/" + key + ".png\" width=\"" + Math.round(sz[0] * k)
+           + "\" height=\"" + Math.round(sz[1] * k) + "\" style=\"vertical-align: middle\">"
+  }
+  function eqNext() {
+    if (eqProc.running || chat.eqWant.length === 0) return
+    let q = chat.eqWant[0]
+    eqProc.job = q
+    eqProc.command = ["python3", root.home + "/.config/scripts/q_eq.py", chat.eqDir + "/" + q.key + ".png",
+                      chat.ink.toString(), q.display ? "1" : "0", String(chat.eqDpi), q.tex]
+    eqProc.running = true
+  }
+  Process {
+    id: eqProc
+    property var job: null
+    stdout: StdioCollector {
+      onStreamFinished: {
+        let wh = text.trim().split(/\s+/).map(Number), s = Object.assign({}, chat.eqSizes)
+        s[eqProc.job.key] = wh.length === 2 && wh[0] > 0 ? [wh[0] / 2, wh[1] / 2] : false
+        chat.eqSizes = s
+        chat.eqWant = chat.eqWant.filter(q => q.key !== eqProc.job.key)
+        Qt.callLater(chat.eqNext)
+      }
+    }
+    onExited: Qt.callLater(chat.eqNext)
+  }
+
   // ---- one turn = one client process
   // ---- attachments: Ctrl+V images from the clipboard (wl-paste), dropped files, or the paperclip picker,
   //      sent with the next message
@@ -316,7 +370,8 @@ Item {
       if (m < 0) break
       if (ev.i < 0) { messages.setProperty(m, "hl", -1); wordPtr = -1; break }
       let norm = w => (w || "").toLowerCase().replace(/[^a-z0-9']/g, "")
-      let toks = chat.stripTags(messages.get(m).text).split(/\s+/).filter(t => t !== "")
+      let toks = chat.eqParts(chat.stripTags(messages.get(m).text)).filter(p => p.tex === undefined)   // equations aren't spoken
+                   .map(p => p.text).join(" ").split(/\s+/).filter(t => t !== "")
       let want = norm(ev.w), hit = -1
       for (let k = wordPtr + 1; k < toks.length && k <= wordPtr + 8; k++)
         if (norm(toks[k]) === want) { hit = k; break }
@@ -645,19 +700,44 @@ Item {
       // Spoken turns: whatever wasn't read aloud (after [quiet], a late answer, a long pause) is dimmed behind a
       // muted-speaker glyph, so it's clear what you heard vs what only landed here.
       readonly property int cut: (row.role === "q" && row.spoken >= 0 && row.spoken < row.text.length) ? row.spoken : -1
+      // Equations (chat.eqParts) show as typeset pictures on their own line ($$, \[) or in the line ($, \(); they
+      // aren't spoken, so they don't count as words for hl.
       function richText() {
-        let out = "", n = -1, off = 0, dim = false
-        for (let part of row.shown.split(/(\s+)/)) {
-          if (part === "") continue
-          if (row.cut >= 0 && !dim && off >= row.cut && !/^\s+$/.test(part)) {
-            dim = true
-            out += "<span style=\"color:" + chat.inkMute + "\">" + "󰖁 "
+        let out = "", n = -1, off = 0, dim = false, eatNl = false
+        let esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        for (let eq of chat.eqParts(row.shown)) {
+          if (eq.tex !== undefined) {
+            if (row.cut >= 0 && !dim && off >= row.cut) { dim = true; out += "<span style=\"color:" + chat.inkMute + "\">󰖁 " }
+            off += eq.text.length
+            let img = chat.eqHtml(eq, body.width)
+            if (!img) { out += esc(eq.text); continue }
+            if (eq.display) {                // its own indented block, which takes the place of the line breaks around it
+              out = out.replace(/<br>$/, "") + "<p style=\"margin: 0 0 0 " + metrics.s(18) + "px\">" + img + "</p>"
+              eatNl = true
+            } else out += img
+            continue
           }
-          off += part.length
-          if (/^\s+$/.test(part)) { out += part.replace(/\n/g, "<br>"); continue }
-          n++
-          let e = part.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-          out += n === row.hl ? "<i><span style=\"color:" + chat.gold + "\">" + e + "</span></i>" : e
+          for (let part of eq.text.split(/(\s+)/)) {
+            if (part === "") continue
+            if (eatNl) {                     // the block already ends the line after a display equation
+              eatNl = false
+              if (/^\s*\n/.test(part)) {
+                let rest = part.replace(/^[^\n]*\n/, "")
+                off += part.length - rest.length
+                part = rest
+                if (part === "") continue
+              }
+            }
+            if (row.cut >= 0 && !dim && off >= row.cut && !/^\s+$/.test(part)) {
+              dim = true
+              out += "<span style=\"color:" + chat.inkMute + "\">" + "󰖁 "
+            }
+            off += part.length
+            if (/^\s+$/.test(part)) { out += part.replace(/\n/g, "<br>"); continue }
+            n++
+            let e = esc(part)
+            out += n === row.hl ? "<i><span style=\"color:" + chat.gold + "\">" + e + "</span></i>" : e
+          }
         }
         if (dim) out += "</span>"
         return out + (row.pending ? " ▍" : "")

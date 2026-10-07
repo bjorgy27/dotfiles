@@ -22,6 +22,7 @@ Commands:
   turn --wav file.wav          transcribe a file, then answer
   say "..."                    TTS only
   enroll [name] [--last N]     teach the shared speaker service a voice from the last N clips (no name = list)
+  speaker-status               clips per device in each profile, and the last accept/refuse decisions
 
 Who is talking: with Q_SPEAKER_URL set, every turn is matched against the enrolled profiles on q-speaker
 (the service can be shared with other clients, so enrolling once is enough for all of them). The model is told
@@ -100,6 +101,10 @@ KEEP_CLIPS = int(E("Q_KEEP_CLIPS", "40"))        # turns of audio kept for after
 CLIPS_DIR = os.path.join(STATE_DIR, "clips")
 ONLY_OWNER = E("Q_ONLY_OWNER", "1") not in ("0", "", "false")   # spoken turns: household only
 REFUSAL = E("Q_REFUSAL", "I answer to Beck alone, I'm afraid. Do carry on without me.")
+REPEAT = E("Q_REPEAT", "I didn't quite catch whose voice that was. Say it again, a little longer.")
+VOICE_DOWN = E("Q_VOICE_DOWN", "My ear for Beck's voice is offline, so I'm ignoring voices. Type to me instead.")
+SPEAKER_BYPASS = E("Q_SPEAKER_BYPASS", "0") not in ("0", "", "false")   # emergency: skip the voice check
+BYPASS_FILE = os.path.join(HOME, ".config/q-voice/speaker-bypass")      # touch it to skip, remove to re-arm
 GATEWAY_URL = E("Q_GATEWAY_URL", "")
 GATEWAY_TOKEN = E("Q_GATEWAY_TOKEN", "")
 AGENT = E("Q_AGENT", "main")
@@ -270,7 +275,33 @@ _TAG = re.compile(r"\[[a-z][a-z' ,-]{1,40}\]")
 
 
 def strip_tags(s):
-    return re.sub(r" {2,}", " ", _TAG.sub("", s)).strip()
+    out, last = [], 0
+    for m in _MATH.finditer(s):                  # an interval like $[a, b]$ isn't an audio tag
+        out += [_TAG.sub("", s[last:m.start()]), m.group()]
+        last = m.end()
+    out.append(_TAG.sub("", s[last:]))
+    return re.sub(r" {2,}", " ", "".join(out)).strip()
+
+
+# LaTeX math, the panel typesets it (QChatWidget.qml eqParts, same delimiters): $$...$$, \[...\], \(...\), $...$
+# (a lone $ for prices doesn't count). Never spoken: Splitter drops it, and holds a sentence back while a display
+# equation is still streaming in.
+_MATH = re.compile(r"\$\$.+?\$\$|\\\[.+?\\\]|\\\(.+?\\\)|(?<![\\$\w])\$(?=\S)[^$\n]*?[^\s\\]\$(?![\w$])", re.S)
+_MATH_OPEN = re.compile(r"\$\$|\\\[|\\\(")
+_MATH_CLOSE = {"$$": "$$", "\\[": "\\]", "\\(": "\\)"}
+
+
+def math_hold(s):
+    """Index where an unfinished $$ / \\[ / \\( equation starts, or len(s)."""
+    pos = 0
+    while True:
+        m = _MATH_OPEN.search(s, pos)
+        if not m:
+            return len(s)
+        end = s.find(_MATH_CLOSE[m.group()], m.end())
+        if end < 0:
+            return m.start()
+        pos = end + 2
 
 
 # Portrait mood: the prefix asks the agent to open each reply with [lion:<mood>]. MoodFilter takes it (and any
@@ -655,15 +686,16 @@ def identify_speaker(wav_bytes):
     if not SPEAKER_URL:
         return None
     try:
-        r = SESSION.post(SPEAKER_URL, data=wav_bytes, headers={"Content-Type": "audio/wav"}, timeout=12)
+        r = SESSION.post(SPEAKER_URL, params={"device": DEVICE or ""}, data=wav_bytes,
+                         headers={"Content-Type": "audio/wav"}, timeout=12)
         if not r.ok:
             dbg(f"speaker http {r.status_code}: {r.text[:200]}")
-            return None
+            return DOWN
         res = r.json()
-        return res if res.get("speaker") not in (None, "unknown") else None
+        return res if isinstance(res.get("speaker"), str) else DOWN
     except Exception as e:  # noqa
         dbg(f"speaker id failed: {e}")
-        return None
+        return DOWN
 
 
 def wav_slice(wav_bytes, start_s, end_s):
@@ -726,12 +758,28 @@ def save_clip(wav_bytes):
         return None
 
 
-def is_stranger(spk):
-    """True only when the voice is confidently somebody outside the household. 'unsure' and
-    'unknown' (short clip, service down, nobody enrolled) stay allowed on purpose: a bad match
-    should never lock the owner out of his own machine."""
-    who = (spk or {}).get("speaker")
-    return bool(who) and who not in HOUSEHOLD and who not in ("unsure", "unknown")
+DOWN = {"speaker": "down", "score": 0.0}     # q-speaker unreachable or not configured
+
+
+def speaker_bypass():
+    """Beck's way back in if the voice check ever locks him out: Q_SPEAKER_BYPASS=1 or the bypass file."""
+    return SPEAKER_BYPASS or os.path.exists(BYPASS_FILE)
+
+
+def gate_line(spk):
+    """None when a spoken turn may go to the agent; otherwise the line to say instead. Fails closed: only a
+    confident household match passes; a short, noisy or borderline match asks again; anything else is refused.
+    Typed turns never come through here."""
+    if not ONLY_OWNER or speaker_bypass():
+        return None
+    who = (spk or DOWN).get("speaker")
+    if who in HOUSEHOLD:
+        return None
+    if who == "down":
+        return VOICE_DOWN
+    if who in ("unsure", "unknown") or spk.get("repeat"):
+        return REPEAT
+    return REFUSAL
 
 
 def speaker_note(spk):
@@ -886,25 +934,33 @@ class Splitter:
     def feed(self, s):
         self.buf += s
         while True:
+            # never cut inside an equation, or into one that hasn't closed yet (it's dropped whole in _out)
+            hold = math_hold(self.buf)
+            spans = [x.span() for x in _MATH.finditer(self.buf, 0, hold)]
+
+            def ok(i):
+                return i < hold and not any(a <= i < b for a, b in spans)
+
             m = None
             for cand in _END.finditer(self.buf):
-                if cand.group(1) == "":
+                if cand.group(1) == "" or cand.start() >= hold:
                     break  # punctuation at the very end of what we have: wait for more ("3." + "5")
                 head = self.buf[:cand.start() + 1]
-                if len(head.strip()) < 12 or _ABBR.search(head.rstrip()):
+                if not ok(cand.start()) or len(head.strip()) < 12 or _ABBR.search(head.rstrip()):
                     continue
                 m = cand
                 break
             if m is None:
                 # paragraph break is always a boundary
-                if "\n\n" in self.buf:
-                    head, self.buf = self.buf.split("\n\n", 1)
+                para = next((x.start() for x in re.finditer(r"\n\n", self.buf) if ok(x.start())), -1)
+                if para >= 0:
+                    head, self.buf = self.buf[:para], self.buf[para + 2:]
                     self._out(head)
                     continue
                 # first chunk: don't wait forever for a period on a long opening sentence
                 if self.first and len(self.buf) > 220:
                     cut = max(self.buf.rfind(", ", 100), self.buf.rfind("; ", 100))
-                    if cut > 0:
+                    if cut > 0 and ok(cut):
                         head, self.buf = self.buf[:cut + 1], self.buf[cut + 2:]
                         self._out(head)
                         continue
@@ -917,7 +973,10 @@ class Splitter:
         self.buf = ""
 
     def _out(self, s):
-        s = clean_text(s)
+        bare = _MATH.sub(" ", s)
+        if bare != s and not re.search(r"\w", bare):
+            return                               # the sentence was only an equation
+        s = clean_text(bare)
         if s:
             self.first = False
             self.emit(s)
@@ -1104,14 +1163,15 @@ class Player:
 def run_turn(text, t_speech_end=None, speaker=None):
     """Stream the reply for `text` and speak it. Returns (reply, interrupted).
     `speaker` is a q-speaker /identify result (or None): it labels the log and tells the model who is talking."""
-    if ONLY_OWNER and is_stranger(speaker):
+    line = gate_line(speaker) if speaker is not None else None
+    if line:
         who = speaker.get("speaker")
-        heard = "an unrecognized voice" if who == "guest" else SHORT_NAMES.get(who, who.title())
-        dbg(f"refused a spoken turn from {heard} (Q_ONLY_OWNER)")
+        heard = "an unrecognized voice" if who in ("guest", "down", "unknown") else SHORT_NAMES.get(who, who.title())
+        dbg(f"refused a spoken turn: {who} {speaker.get('score', 0)} (Q_ONLY_OWNER)")
         emit({"type": "transcript", "text": text, "via": VIA, "speaker": heard})
-        set_state("idle", text, REFUSAL, speaker)
-        say_line(REFUSAL)
-        return REFUSAL, False
+        set_state("idle", text, line, None)
+        say_line(line)
+        return line, False
 
     global _mood, _gesture, TURN_FAILED
     _mood = ""
@@ -1339,10 +1399,15 @@ def hear(wav, forced=None):
         spk[0] = {"speaker": forced, "score": 1.0}          # test hook: --speaker <profile>
     elif SPEAKER_URL:
         ident.start()
+    elif ONLY_OWNER:
+        spk[0] = DOWN                                       # no speaker service configured: fail closed
     text = transcribe(wav)
     if ident.is_alive():
         ident.join(12)
-    speaker = spk[0]
+    speaker = spk[0] if spk[0] is not None or not ONLY_OWNER else DOWN
+    if speaker is not None and speaker.get("speaker") not in HOUSEHOLD and (
+            speaker_bypass() or (not ONLY_OWNER and speaker.get("speaker") in ("down", "unknown"))):
+        speaker = None                                      # bypassed: an unchecked turn, not a "guest" one
     clip = save_clip(wav) if SPEAKER_URL else None
     if speaker and text:
         text, _turns = label_turns(wav, speaker, text)
@@ -1515,10 +1580,32 @@ def cmd_speakers(args):
     if not wavs:
         sys.exit(f"no clips in {CLIPS_DIR} yet (talk to {NAME} first, then enroll)")
     for w in wavs:
-        with open(w, "rb") as f:
-            r = SESSION.post(f"{base}/enroll", params={"name": args.name}, data=f.read(),
-                             headers={"Content-Type": "audio/wav"}, timeout=30)
+        if w.lower().endswith(".wav"):
+            with open(w, "rb") as f:
+                body = f.read()
+        else:   # a voice note or memo off the phone: ffmpeg to 16 kHz mono 16-bit, in memory only
+            body = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", w, "-t", "20", "-ac", "1", "-ar", "16000",
+                                   "-sample_fmt", "s16", "-f", "wav", "-"], capture_output=True, check=True).stdout
+        r = SESSION.post(f"{base}/enroll", params={"name": args.name, "device": args.device or DEVICE}, data=body,
+                         headers={"Content-Type": "audio/wav"}, timeout=30)
         print(os.path.basename(w), r.text.strip())
+
+
+def cmd_speaker_status(args):
+    """Profile clips per device, the gate's state here, and the last decisions across every device."""
+    base = (SPEAKER_URL or "http://127.0.0.1:8179/identify").rsplit("/", 1)[0]
+    print(f"gate: {'BYPASSED' if speaker_bypass() else 'on' if ONLY_OWNER else 'off'} on {DEVICE}"
+          f" (owner {OWNER or '-'}, service {SPEAKER_URL or 'NOT SET: spoken turns refused'})")
+    try:
+        for name, info in SESSION.get(f"{base}/speakers", timeout=5).json().items():
+            print(f"profile {name}: {info['clips']} clips  " + "  ".join(f"{d} {n}" for d, n in info.get("devices", {}).items()))
+        rows = SESSION.get(f"{base}/decisions", params={"n": args.n}, timeout=5).json()
+    except Exception as e:  # noqa
+        sys.exit(f"q-speaker unreachable ({e}): spoken turns are refused until it is back")
+    for r in rows:
+        ok = "accept" if r["speaker"] in HOUSEHOLD else "repeat" if r.get("repeat") else "refuse"
+        print(f"{time.strftime('%m-%d %H:%M', time.localtime(r['ts']))}  {ok:6}  {r['speaker']:7} {r['score']:.2f}"
+              f"  {r.get('seconds', 0):4.1f}s  {r.get('device') or 'phone/tv bridge'}")
 
 
 def main():
@@ -1538,10 +1625,15 @@ def main():
     e = sub.add_parser("enroll", help="add recent clips to a voice profile (no name = list profiles)")
     e.add_argument("name", nargs="?")
     e.add_argument("--last", type=int, default=1, help="how many of the most recent clips to enroll (default 1)")
-    e.add_argument("--wav", nargs="*", help="enroll these wav files instead of recent clips")
+    e.add_argument("--wav", nargs="*", help="enroll these files instead of recent clips (wav, or any audio ffmpeg reads)")
+    e.add_argument("--device", help="which mic the clips came from (default: Q_DEVICE)")
+    st = sub.add_parser("speaker-status", help="voice profile per device and recent accept/refuse decisions")
+    st.add_argument("-n", type=int, default=15)
     args = ap.parse_args()
     if args.cmd == "enroll":
         return cmd_speakers(args)
+    if args.cmd == "speaker-status":
+        return cmd_speaker_status(args)
     if not GATEWAY_URL or not GATEWAY_TOKEN:
         sys.exit("Q_GATEWAY_URL / Q_GATEWAY_TOKEN not set (see q_voice.env.example; q_voice.sh setup)")
     if args.cmd == "turn":
