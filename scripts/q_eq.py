@@ -29,13 +29,13 @@ def via_latex(tex, out, color, display, dpi):
         with open(os.path.join(d, "eq.tex"), "w") as f:
             f.write(doc)
         p = subprocess.run(["latex", "-interaction=nonstopmode", "-halt-on-error", "eq.tex"], cwd=d,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
         if p.returncode != 0:
             return None
         tmp = out + ".tmp.png"
         p = subprocess.run(["dvipng", "-q", "-D", str(dpi), "-T", "tight", "-bg", "Transparent",
                             "-fg", f"rgb {r:.3f} {g:.3f} {b:.3f}", "-o", tmp, "eq.dvi"], cwd=d,
-                           capture_output=True, text=True, timeout=20)
+                           capture_output=True, text=True, timeout=60)
         if p.returncode != 0 or not os.path.exists(tmp):
             return None
         os.replace(tmp, out)
@@ -45,12 +45,14 @@ def via_latex(tex, out, color, display, dpi):
 def via_mathtext(tex, out, color, display, dpi):
     import matplotlib
     matplotlib.use("Agg")
-    from matplotlib import mathtext
+    from matplotlib.figure import Figure
     from matplotlib.font_manager import FontProperties
     matplotlib.rcParams["mathtext.fontset"] = "cm"
     tmp = out + ".tmp.png"
-    mathtext.math_to_image("$" + tex + "$", tmp, prop=FontProperties(size=14 if display else 12),
-                           dpi=dpi, format="png", color=color)
+    # mathtext.math_to_image paints a white background; draw on a transparent figure instead
+    fig = Figure(figsize=(0.01, 0.01))
+    fig.text(0, 0, "$" + tex + "$", fontproperties=FontProperties(size=14 if display else 12), color=color)
+    fig.savefig(tmp, dpi=dpi, format="png", transparent=True, bbox_inches="tight", pad_inches=0.02)
     os.replace(tmp, out)
     return True
 
