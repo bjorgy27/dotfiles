@@ -1,7 +1,7 @@
 [Added Associations]
 text/plain=org.gnome.TextEditor.desktop;kitty.desktop;
 video/mp4=firefox.desktop;
-application/vnd.openxmlformats-officedocument.presentationml.presentation=firefox.desktop;
+application/vnd.openxmlformats-officedocument.presentationml.presentation=libreoffice-impress.desktop;firefox.desktop;
 application/vnd.openxmlformats-officedocument.wordprocessingml.document=firefox.desktop;
 
 [Default Applications]
@@ -18,3 +18,4 @@ image/svg+xml=org.xfce.ristretto.desktop
 image/avif=org.xfce.ristretto.desktop
 image/heif=org.xfce.ristretto.desktop
 image/x-icon=org.xfce.ristretto.desktop
+application/vnd.openxmlformats-officedocument.presentationml.presentation=libreoffice-impress.desktop

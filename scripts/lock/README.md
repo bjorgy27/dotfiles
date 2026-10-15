@@ -74,10 +74,11 @@ heuristic can't handle.
   `LOCK_TEST_PASSWORD=letmein` auto-types it; `LOCK_TEST_KEYS="abc<<x!"` types
   (`<` backspace, `!` enter).
 - `lock.sh --try [SECS]`: a real lock that unlocks itself after SECS (default
-  10), with a watchdog.
-- Real lock: keep a TTY open (Ctrl+Alt+F3). `lock.sh --unlock` from it unlocks;
-  if the client was killed and Hyprland shows "lockscreen died",
-  `lock.sh --recover`.
+  10), by the timer inside the lock (no IPC watchdog).
+- There is no IPC unlock (security audit 2026-10-10): `lock.sh --unlock`
+  refuses. If the client was killed and Hyprland shows "lockscreen died", run
+  `lock.sh --recover` from a TTY (Ctrl+Alt+F3): it starts a normal password
+  lock over it, then type the password.
 
 Revert: point Super+L (`hypr/hyprland.lua`), the power menu
 (`quickshell/PowerMenuWidget.qml`) and hypridle's `lock_cmd` back at `hyprlock`.

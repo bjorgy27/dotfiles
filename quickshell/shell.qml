@@ -124,6 +124,9 @@ Scope {
   // connected the bar shows a mic next to the Bluetooth icon: press play on the headphones
   // and q_voice_key.sh opens the mic instead of the music.
   readonly property string voiceHeadset: (typeof Local.voiceHeadset === "string") ? Local.voiceHeadset : ""
+  // Q's lion portrait (chat header and corner lion); local.js showLion = false hides it on this machine
+  // (the laptop, Beck 2026-10-15). The [lion:<mood>] tags are still stripped from text and speech either way.
+  readonly property bool showLion: (typeof Local.showLion === "boolean") ? Local.showLion : true
   readonly property bool voiceHeadsetOn: root.voiceEnabled && root.voiceHeadset !== ""
                                          && root.btPower === "on" && root.btConnectedCount > 0
                                          && root.btConnectedName.toLowerCase().indexOf(root.voiceHeadset.toLowerCase()) >= 0
@@ -1594,7 +1597,7 @@ Scope {
       Scope {
         PanelWindow {
           screen: barWindow.modelData
-          visible: root.voiceEnabled && root.qCorner && root.qCornerScreen === barWindow.modelData.name
+          visible: root.voiceEnabled && root.showLion && root.qCorner && root.qCornerScreen === barWindow.modelData.name
           color: "transparent"
           exclusionMode: ExclusionMode.Ignore
           WlrLayershell.layer: WlrLayer.Top

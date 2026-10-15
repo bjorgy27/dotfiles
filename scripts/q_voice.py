@@ -313,6 +313,7 @@ _MOOD_TAG = re.compile(r"\[lion:([a-z_]*)\][ \t]*")
 # while that sentence is heard (Beck, 2026-10-05)
 _LAUGH_TAG = re.compile(r"\[[a-z ,'-]*\b(?:laugh|laughs|laughing|chuckle|chuckles|chuckling)\b[a-z ,'-]*\]", re.I)
 LAUGH_SECS = float(E("Q_LAUGH_SECS", "0.9"))
+PLAY_VOLUME = float(E("Q_PLAY_VOLUME", "1.0"))        # Beck 2026-10-14: speech playback volume, 1.0 = unchanged
 OUT_LATENCY = float(E("Q_OUT_LATENCY", "0.12"))   # pitch filter + pw-play's 60 ms + the sink, before a byte is heard
 CHAR_SECS = 0.065                                  # spoken seconds per character, until a sentence's audio is all in
 _MOOD_PART = re.compile(r"\[(?:l(?:i(?:o(?:n(?::[a-z_]*)?)?)?)?)?$")   # an unfinished tag at the end of the buffer
@@ -1110,6 +1111,8 @@ class Player:
                 else:
                     play = ["pw-play", "--rate", str(PCM_RATE), "--channels", "1", "--format", "s16", "--raw",
                             "--latency", "60ms", "-"]
+                    if PLAY_VOLUME != 1.0:
+                        play[1:1] = ["--volume", str(PLAY_VOLUME)]
                     if PITCH != 1.0:
                         # resample-as-if-slower lowers pitch and formants together (a bigger voice), atempo
                         # puts the speed back; streamed, so the first syllable isn't held back

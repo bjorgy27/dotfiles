@@ -11,8 +11,8 @@
 //                    here may LOCK_PAM_DIR/LOCK_PAM_CONFIG swap the PAM
 //                    service, LOCK_TEST_PASSWORD auto-type a password.
 //
-// Unlock is only ever done after PAM says yes, by the timer above, or by
-// `lock.sh --unlock` (IPC) from a TTY.
+// Unlock is only ever done after PAM says yes or by the timer above. There is
+// no IPC unlock.
 import QtQuick
 import QtQml
 import Quickshell
@@ -147,10 +147,8 @@ ShellRoot {
     onTriggered: { console.warn("lock: timeout (" + root.seconds + "s), unlocking"); root.unlock() }
   }
 
-  IpcHandler {
-    target: "lock"
-    function unlock(): void { root.unlock() }
-  }
+  // No IPC unlock (security audit 2026-10-10): unlock only after PAM success
+  // or the --try/--test timer above.
 
   // Test hook (test mode only): type a password once the surfaces are up.
   Timer {

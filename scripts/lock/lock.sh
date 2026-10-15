@@ -16,9 +16,10 @@
 #                           to DIR/<monitor>.png (default $XDG_RUNTIME_DIR/
 #                           lockscreen/preview); nothing shows on screen.
 #                           LOCK_WALLPAPER=path previews another wallpaper.
-#   lock.sh --unlock        unlock a running lock (from a TTY: Ctrl+Alt+F3)
+#   lock.sh --unlock        refused: there is no unlock without the password
 #   lock.sh --recover       the lock client died and left Hyprland's "lockscreen
-#                           died" screen: start a 3s lock to clear it
+#                           died" screen: start a normal password lock over it
+#                           (from a TTY: Ctrl+Alt+F3), then type the password
 dir=$(dirname "$(realpath "$0")")
 run=${XDG_RUNTIME_DIR:-/run/user/$UID}
 state=$run/lockscreen
@@ -60,7 +61,7 @@ restore_window() {
 
 case $1 in
   --locked)  locked; exit ;;
-  --unlock)  exec quickshell -p "$dir/qs" ipc call lock unlock ;;
+  --unlock)  echo "lock.sh: no IPC unlock; type the password on the lock screen" >&2; exit 2 ;;
   --preview)
     out=${2:-$state/preview}
     mkdir -p "$out"
@@ -72,9 +73,11 @@ case $1 in
     ls "$out"/*.png
     exit ;;
   --recover)
+    # Never touch the restore option while a live lock holds the screen, and
+    # never start a self-unlocking lock: recovery ends at a password prompt.
+    if locked; then echo "lock.sh: a lock is already up; type the password" >&2; exit 1; fi
     restore_window 5
-    "$0" --try 3
-    exit ;;
+    exec "$0" ;;
 esac
 
 mode=lock secs=0
@@ -106,11 +109,6 @@ if [[ $mode == test ]]; then
     'account required    pam_permit.so' >"$state/pam/test"
   export LOCK_PAM_DIR=$state/pam LOCK_PAM_CONFIG=test
   [[ -n $LOCK_TEST_PASSWORD ]] && export LOCK_TEST_PASSWORD
-fi
-
-# Watchdog for --try: if the timer inside the lock somehow doesn't fire, ask again over IPC.
-if [[ $mode == lock && $secs -gt 0 ]]; then
-  ( sleep $((secs + 6)); quickshell -p "$dir/qs" ipc call lock unlock >/dev/null 2>&1 ) &
 fi
 
 start=$SECONDS

@@ -25,6 +25,7 @@
 import QtQuick
 import QtQuick.Effects
 import Quickshell
+import Quickshell.Io
 
 FocusScope {
   id: surface
@@ -276,6 +277,31 @@ FocusScope {
       x: lbl.ink.x; y: t.baselineOffset - lbl.capH; width: lbl.boxW; height: lbl.boxH
       color: "transparent"; border.color: "#f38ba8"; border.width: 1
     }
+  }
+
+  // "Hey Q" wake word (q-wake.service): a small dot, bottom left. Green = listening,
+  // yellow = a voice turn is running, grey = muted; hidden when the listener is off or stale.
+  property string wakeState: ""
+  FileView {
+    id: wakeFile
+    path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/q-wake/state.json"
+    onLoaded: {
+      try {
+        let w = JSON.parse(text())
+        surface.wakeState = (Date.now() / 1000 - (w.ts ?? 0) < 90) ? (w.state ?? "") : ""
+      } catch (e) { surface.wakeState = "" }
+    }
+    onLoadFailed: surface.wakeState = ""
+  }
+  Timer { interval: 2000; running: true; repeat: true; triggeredOnStart: true; onTriggered: wakeFile.reload() }
+  Rectangle {
+    parent: ui
+    readonly property bool shown: ["listening", "locked-listening", "busy", "muted"].indexOf(surface.wakeState) >= 0
+    visible: shown
+    width: 9 * surface.s; height: width; radius: width / 2
+    x: 28 * surface.s; y: surface.height - 28 * surface.s - height
+    color: surface.wakeState === "busy" ? surface.cYellow : surface.wakeState === "muted" ? surface.cSubtext : surface.cGreen
+    opacity: surface.wakeState === "muted" ? 0.35 : 0.7
   }
 
   Label { id: clockLabel; element: "clock"; text: Qt.formatTime(clock.date, surface.els.clock?.format ?? "HH:mm") }

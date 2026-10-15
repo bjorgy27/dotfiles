@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Next-track key router, so the double press on a Bluetooth headset starts a voice turn.
 #
+#   screen locked     -> skip to the next track, never a voice turn
 #   headset connected -> talk to Q (q_voice.sh toggle), even while music is playing
 #   no headset        -> skip to the next track, as always
 #
@@ -11,6 +12,11 @@
 CONF="${Q_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/q-voice/env}"
 [ -r "$CONF" ] && . "$CONF"
 : "${Q_VOICE_HEADSET:=Sonos Ace}"
+
+# Locked screen: next track only, never a voice turn to Q (security audit 2026-10-10).
+if "$(dirname "$(readlink -f "$0")")/lock/lock.sh" --locked; then
+  exec playerctl --player spotifyd,%any next
+fi
 
 if [ -n "$Q_VOICE_HEADSET" ] && command -v bluetoothctl >/dev/null 2>&1 &&
    timeout 2 bluetoothctl devices Connected 2>/dev/null | grep -qiF "$Q_VOICE_HEADSET"; then

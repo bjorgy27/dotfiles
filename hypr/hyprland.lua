@@ -124,7 +124,8 @@ hl.bind("XF86AudioPlay",        hl.dsp.exec_cmd("playerctl --player spotifyd,%an
 hl.bind("XF86AudioPause",       hl.dsp.exec_cmd("playerctl --player spotifyd,%any play-pause"), { locked = true })
 hl.bind("XF86AudioStop",        hl.dsp.exec_cmd("playerctl --player spotifyd,%any stop"),       { locked = true })
 -- Next-track routes through q_voice_key.sh: with the headset connected (double press on the
--- Sonos Ace content key) it starts a voice turn instead of skipping a track.
+-- Sonos Ace content key) it starts a voice turn instead of skipping a track. On the lock
+-- screen the script only skips the track, never a voice turn.
 hl.bind("XF86AudioNext",        hl.dsp.exec_cmd("~/.config/scripts/q_voice_key.sh"),            { locked = true })
 hl.bind("XF86AudioPrev",        hl.dsp.exec_cmd("playerctl --player spotifyd,%any previous"),   { locked = true })
 hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 2%+"), { locked = true, repeating = true })

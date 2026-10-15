@@ -468,10 +468,12 @@ Item {
   }
 
   // header: big portrait with the galaxy ring on the left, the name and status line beside it
+  // root.showLion false (local.js): no portrait, a zero-width avatar keeps the header compact and its timers stopped
   LionAvatar {
     id: avatar
-    width: Math.round(Math.min(metrics.s(290), chat.height * 0.23))
-    height: width
+    visible: root.showLion
+    width: root.showLion ? Math.round(Math.min(metrics.s(290), chat.height * 0.23)) : 0
+    height: root.showLion ? width : metrics.s(110)
     x: chat.pad
     y: metrics.s(24)
     restColor: chat.gold
