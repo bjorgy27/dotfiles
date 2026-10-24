@@ -82,6 +82,9 @@ Item {
     property string commitWallpaperPath: ""
 
     readonly property string wallpaperScript: Quickshell.env("HOME") + "/.config/scripts/wallpaper/wallpaper_select.sh"
+    // 400 px-high copies of the stills made by `wallpaper_select.sh --warm`, so
+    // flipping never decodes a 5-8K original; a missing one falls back to it.
+    readonly property string thumbDir: Quickshell.env("XDG_RUNTIME_DIR") ? "file://" + Quickshell.env("XDG_RUNTIME_DIR") + "/wallpaper_select/thumbs/" : ""
 
     function normalizedPath(path) {
         return String(path || "").replace(/[\r\n]+/gm, "");
@@ -343,8 +346,14 @@ Item {
             Component.onCompleted: updateLive()
             Connections {
                 target: wallpaperSelectorWidget
-                function onIsOpenChanged() { wallpaperDelegate.updateLive() }
+                function onIsOpenChanged() {
+                    wallpaperDelegate.updateLive();
+                    // Retry the thumbnail: --warm (run on open) may have made it since.
+                    if (wallpaperSelectorWidget.isOpen)
+                        wallpaperDelegate.thumbMissing = false;
+                }
             }
+            property bool thumbMissing: false
 
             Item {
                 id: img
@@ -355,7 +364,10 @@ Item {
                     anchors.fill: parent
                     visible: !wallpaperDelegate.isLive
                     // source is static per delegate! It never changes, so no reloading.
-                    source: wallpaperDelegate.isLive ? "" : fileUrl
+                    source: wallpaperDelegate.isLive ? ""
+                        : wallpaperDelegate.thumbMissing || wallpaperSelectorWidget.thumbDir === "" ? fileUrl
+                        : wallpaperSelectorWidget.thumbDir + fileBaseName + ".png"
+                    onStatusChanged: if (status === Image.Error && !wallpaperDelegate.thumbMissing) wallpaperDelegate.thumbMissing = true
 
                     // Keep the optimization to ensure initial load is fast
                     sourceSize.width: 0

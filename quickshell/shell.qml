@@ -414,10 +414,11 @@ Scope {
   // === GLOBAL SHORTCUTS (registered once) ===
   property int toggleCounter: 0
   property string toggleTarget: ""
+  property string toggleMonitor: ""   // monitor name from IPC, "" = the focused monitor
 
   GlobalShortcut {
     name: "toggleDashboard"
-    onPressed: { root.toggleTarget = "dashboard"; root.toggleCounter++ }
+    onPressed: { root.toggleTarget = "dashboard"; root.toggleMonitor = ""; root.toggleCounter++ }
   }
 
   GlobalShortcut {
@@ -428,7 +429,67 @@ Scope {
   // Q chat panel (QChatWidget.qml, SUPER+A): only on machines set up for the voice assistant
   GlobalShortcut {
     name: "toggleQChat"
-    onPressed: if (root.voiceEnabled) { root.toggleTarget = "q_chat"; root.toggleCounter++ }
+    onPressed: if (root.voiceEnabled) { root.toggleTarget = "q_chat"; root.toggleMonitor = ""; root.toggleCounter++ }
+  }
+
+  // Fullscreen dashboard: opens it full-size if closed, else toggles the size.
+  // Per monitor like the other toggles — only the focused monitor's bar reacts.
+  property int fullCounter: 0
+  property string fullTarget: ""      // monitor name from IPC, "" = the focused monitor
+  GlobalShortcut {
+    name: "toggleDashboardFullscreen"
+    onPressed: { root.fullTarget = ""; root.fullCounter++ }
+  }
+
+  // === CONTROL CENTER (ControlCenterWidget.qml in the pocket under the clock) ===
+  // ControlCenterService is the notification daemon (org.freedesktop.Notifications),
+  // do not disturb and the `controlcenter` IPC. No pop-ups: the panel and the bell's badge only.
+  // Commands go to the focused monitor's bar: op "toggle" | "open" | "close", tab = class or "".
+  property int ccCounter: 0
+  property string ccOp: ""
+  property string ccTab: ""
+  function ccCommand(op, tab) { ccOp = op; ccTab = tab; ccCounter++ }
+  // Monitors whose bar shows the control center (the list then counts as read).
+  property var ccOpenOn: []
+  function noteControlCenter(monitor, open) {
+    let l = ccOpenOn.filter(m => m !== monitor)
+    if (open) l.push(monitor)
+    ccOpenOn = l
+  }
+
+  ControlCenterService {
+    id: controlCenter
+    lookingAtList: root.ccOpenOn.length > 0 && tab === "notifications"
+    onCommand: (op, tab) => root.ccCommand(op, tab)
+  }
+
+  GlobalShortcut {
+    name: "toggleControlCenter"
+    onPressed: root.ccCommand("toggle", "")
+  }
+  GlobalShortcut {
+    name: "toggleNotifications"
+    onPressed: root.ccCommand("toggle", "notifications")
+  }
+
+  // Dashboard tabs: next/prev/set on the focused monitor (or a named one, from
+  // IPC: `qs ipc call dashboard nextTab` etc. in DashboardConfig.qml).
+  property int tabCounter: 0
+  property string tabOp: ""
+  property string tabArg: ""
+  property string tabMonitor: ""
+  function tabCommand(op, arg, monitor) { tabOp = op; tabArg = arg; tabMonitor = monitor; tabCounter++ }
+  // monitor name -> tab name, for getTab
+  property var tabNames: ({})
+  function noteTab(monitor, name) { let t = Object.assign({}, tabNames); t[monitor] = name; tabNames = t }
+
+  GlobalShortcut {
+    name: "dashboardNextTab"
+    onPressed: root.tabCommand("next", "", "")
+  }
+  GlobalShortcut {
+    name: "dashboardPrevTab"
+    onPressed: root.tabCommand("prev", "", "")
   }
 
   // === VOICE ASSISTANT STATE (written by scripts/q_voice.py; shown by VoiceBarWidget) ===
@@ -533,17 +594,17 @@ Scope {
 
   GlobalShortcut {
     name: "toggleWallpaperSelector"
-    onPressed: { root.toggleTarget = "wallpaper_selector"; root.toggleCounter++ }
+    onPressed: { root.toggleTarget = "wallpaper_selector"; root.toggleMonitor = ""; root.toggleCounter++ }
   }
 
   GlobalShortcut {
     name: "toggleAppSelector"
-    onPressed: { root.toggleTarget = "app_selector"; root.toggleCounter++ }
+    onPressed: { root.toggleTarget = "app_selector"; root.toggleMonitor = ""; root.toggleCounter++ }
   }
 
   GlobalShortcut {
     name: "togglePowerMenu"
-    onPressed: { root.toggleTarget = "power_menu"; root.toggleCounter++ }
+    onPressed: { root.toggleTarget = "power_menu"; root.toggleMonitor = ""; root.toggleCounter++ }
   }
 
   // === WALLPAPER SELECTOR SHARED STATE ===
@@ -642,6 +703,9 @@ Scope {
       }
       property int monitorId: hyprMonitor?.id ?? 0
       property bool isFocused: Hyprland.focusedMonitor?.id === monitorId
+      // Dashboard filling this screen (the pocket grows to the whole monitor and
+      // the grid's rows scale to fit). Forgotten when the dashboard closes.
+      property bool dashboardFull: false
 
       // === PER-MONITOR METRICS (scale + orientation) ===
       // One instance per screen. Reached by every widget via QML dynamic
@@ -703,19 +767,142 @@ Scope {
 
         // Dashboard reflow: fewer columns on narrow / portrait screens.
         readonly property int dashColumns: isVertical ? 2 : 4
+
+        // Dashboard card scale: how a card's cell compares with the size it was
+        // designed for (refW x refH, unscaled px). Shrinks linearly so text keeps
+        // fitting, grows damped so a fullscreen cell doesn't get poster-sized text.
+        function cardScale(w, h, refW, refH) {
+          let raw = Math.min(w / s(refW), h / s(refH))
+          return Math.max(0.8, Math.min(1.8, raw > 1 ? Math.pow(raw, 0.6) : raw))
+        }
       }
+
+      // === PER-MONITOR DASHBOARD STATE (health, tabs, standby) ===
+      // Reached by widgets via dynamic scoping like `metrics`. Cards report a
+      // subsystem level with dashState.report(); the worst one is the health
+      // word in the tab strip. Tunables: themes/Dash.qml. Levels: themes/Status.qml.
+      QtObject {
+        id: dashState
+
+        readonly property bool open: bar.state === "dashboard"
+        signal ticked()
+
+        // key -> { level, detail, label, type, ttl }; `seen` holds the last report
+        // time per key without notifying (staleness is checked each tick).
+        property var reports: ({})
+        property var seen: ({})
+        property int healthLevel: 0
+        property string healthDetail: ""
+
+        function report(key, label, type, level, detail, ttl) {
+          seen[key] = Date.now()
+          let r = reports[key]
+          if (r && r.level === level && r.detail === detail && r.label === label) return
+          let next = Object.assign({}, reports)
+          next[key] = { label: label, type: type, level: level, detail: detail || "", ttl: ttl || 30000 }
+          reports = next
+          recompute()
+        }
+
+        // Worst level over the subsystems whose card is in the active preset (any
+        // tab); a feed silent for longer than its ttl counts as an advisory.
+        function recompute() {
+          let types = { "_shell": true }
+          for (let w of (dashboardGrid.preset?.widgets ?? [])) types[w.type] = true
+          let now = Date.now(), worst = 0, detail = ""
+          for (let k in reports) {
+            let r = reports[k]
+            if (!types[r.type]) continue
+            let stale = now - (seen[k] || 0) > r.ttl
+            let agg = stale ? Status.advisory : r.level
+            if (agg > worst) { worst = agg; detail = stale ? r.label + " NO DATA" : r.detail }
+          }
+          healthLevel = worst
+          healthDetail = worst > 0 ? detail : ""
+        }
+
+        // Standby: settles after Dash.standbyMs without pointer activity.
+        property bool standby: false
+        function poke() {
+          if (standby) standby = false
+          if (open && Dash.standbyEnabled) standbyTimer.restart()
+        }
+
+        onOpenChanged: {
+          standby = false
+          if (open) { recompute(); poke() }
+        }
+      }
+      Timer {
+        // 1 Hz while open: strip clock, staleness and the shell-level thermal report.
+        interval: 1000
+        repeat: true
+        running: dashState.open
+        triggeredOnStart: true
+        onTriggered: {
+          let t = parseFloat(root.tempValue)
+          if (!isNaN(t) && t > 0) dashState.report("therm", "THERM", "_shell", Status.level("temp", t), "CPU " + t.toFixed(0) + "°C", 10000)
+          dashState.recompute()
+          dashState.ticked()
+        }
+      }
+      Timer {
+        id: standbyTimer
+        interval: Dash.standbyMs
+        onTriggered: if (dashState.open && Dash.standbyEnabled) dashState.standby = true
+      }
+
+      // Dashboard tab on this monitor (tabbed presets; 0 = the first tab, the
+      // globe). Kept while the shell runs, not across restarts.
+      property int dashTab: 0
+      property int tabDir: 1
+      function setTab(i, dir) {
+        if (i === dashTab || i < 0) return
+        tabDir = dir || (i > dashTab ? 1 : -1)
+        dashTab = i
+        dashState.poke()
+      }
+      onDashTabChanged: root.noteTab(modelData.name, dashboardGrid.tabs[dashboardGrid.tab]?.name ?? "")
 
       // Handle global shortcut toggles (only on focused monitor)
       Connections {
         target: root
         function onToggleCounterChanged() {
-          if (barWindow.isFocused) {
+          if (root.toggleMonitor === "" ? barWindow.isFocused : barWindow.modelData.name === root.toggleMonitor) {
             if (bar.state !== root.toggleTarget) {
               bar.state = root.toggleTarget
             } else {
               bar.state = "normal"
             }
           }
+        }
+        function onCcCounterChanged() {
+          if (!barWindow.isFocused) return
+          let open = bar.state === "control_center"
+          if (root.ccOp === "close") { if (open) bar.state = "normal"; return }
+          let name = root.ccTab !== "" ? controlCenter.className(root.ccTab) : ""
+          let switching = name !== "" && name !== controlCenter.tab
+          if (name !== "") controlCenter.tab = name
+          bar.state = (root.ccOp === "toggle" && open && !switching) ? "normal" : "control_center"
+        }
+        // Tab commands (shortcuts / IPC): on a closed dashboard they just open it
+        // ("set" also picks the tab first).
+        function onTabCounterChanged() {
+          if (!(root.tabMonitor === "" ? barWindow.isFocused : barWindow.modelData.name === root.tabMonitor)) return
+          let n = dashboardGrid.tabs.length
+          let wasOpen = bar.state === "dashboard"
+          if (root.tabOp === "set") {
+            barWindow.setTab(dashboardConfig.tabIndex(dashboardGrid.preset, root.tabArg))
+          } else if (wasOpen && n > 1) {
+            let step = root.tabOp === "prev" ? -1 : 1
+            barWindow.setTab((barWindow.dashTab + step + n) % n, step)
+          }
+          if (!wasOpen) bar.state = "dashboard"
+        }
+        function onFullCounterChanged() {
+          if (root.fullTarget === "" ? !barWindow.isFocused : barWindow.modelData.name !== root.fullTarget) return
+          if (bar.state !== "dashboard") { barWindow.dashboardFull = true; bar.state = "dashboard" }
+          else barWindow.dashboardFull = !barWindow.dashboardFull
         }
       }
 
@@ -738,7 +925,7 @@ Scope {
       // The Q chat is OnDemand too, so the windows under it stay usable while it is open (click the panel to type).
       WlrLayershell.keyboardFocus: (bar.state === "app_selector" || bar.state === "power_menu" || bar.state === "network" || bar.state === "bluetooth" || bar.state === "radar_settings")
             ? WlrKeyboardFocus.Exclusive
-            : (bar.state === "wallpaper_selector" || bar.state === "q_chat")
+            : (bar.state === "wallpaper_selector" || bar.state === "q_chat" || bar.state === "control_center")
             ? WlrKeyboardFocus.OnDemand
             : WlrKeyboardFocus.None
 
@@ -753,6 +940,16 @@ Scope {
       Component.onDestruction: {
         root.setSelectorOpen(barWindow, false)
         root.setDashVisible(modelData.name, false)
+        root.noteControlCenter(modelData.name, false)
+      }
+
+      readonly property bool ccOpen: bar.state === "control_center"
+      onCcOpenChanged: root.noteControlCenter(modelData.name, ccOpen)
+      // The pocket's place along the bar is picked when a state opens and kept
+      // while it closes, so it shrinks back where it was.
+      Connections {
+        target: bar
+        function onStateChanged() { if (bar.state !== "normal") bar.pocketSide = bar.state === "control_center" ? 1 : 0 }
       }
 
       // Escape/Enter close every open selector, not just the local one.
@@ -869,6 +1066,7 @@ Scope {
         Shape {
           id: bar
           state: "normal"
+          onStateChanged: if (state !== "dashboard") barWindow.dashboardFull = false
 
           layer.enabled: true
           layer.samples: 4
@@ -891,7 +1089,15 @@ Scope {
           // across the diagonal flips arc handedness, so arcDir swaps when vertical.
           readonly property real barLong: metrics.barLength
           readonly property real barCross: barThickness + dropdownHeight
-          readonly property real pocketLo: (barLong - dropdownWidth) / 2
+          // 0 = centred (every other pocket), 1 = at the far end under the clock
+          // (control center). Slides only when switching straight from another
+          // open pocket; opening from closed starts in place.
+          property real pocketSide: 0
+          Behavior on pocketSide { enabled: bar.dropdownHeight > 1; NumberAnimation { duration: 100; easing.type: Easing.OutQuint } }
+          readonly property real pocketEndInset: metrics.marginBar
+          readonly property real pocketCenter: (1 - pocketSide) * barLong / 2
+              + pocketSide * (barLong - pocketEndInset - dropdownFilletRadius - dropdownWidth / 2)
+          readonly property real pocketLo: pocketCenter - dropdownWidth / 2
           readonly property real pocketHi: pocketLo + dropdownWidth
           function sx(a, b) { return metrics.isVertical ? b : a }
           function sy(a, b) { return metrics.isVertical ? a : b }
@@ -974,10 +1180,12 @@ Scope {
               name: "dashboard"
               PropertyChanges {
                 target: bar;
-                dropdownWidth: metrics.isVertical ? (dashboardGrid.verticalContentHeight + dashboardGrid.topPad + dashboardGrid.bottomPad + bar.dropdownWidgetPadding * 2) : metrics.longPct(dashboardGrid.widthPercent);
-                dropdownHeight: metrics.isVertical ? metrics.crossPct(72) : (dashboardGrid.implicitHeight + (bar.dropdownWidgetPadding * 2) - bar.barThickness);
-                dropdownFilletRadius: metrics.radiusXL;
-                dropdownCornerRadius: metrics.radiusXL
+                dropdownWidth: barWindow.dashboardFull ? metrics.longPct(100)
+                    : metrics.isVertical ? (dashboardGrid.verticalContentHeight + dashboardGrid.topPad + dashboardGrid.bottomPad + bar.dropdownWidgetPadding * 2) : metrics.longPct(dashboardGrid.widthPercent);
+                dropdownHeight: barWindow.dashboardFull ? (metrics.crossPct(100) - bar.barThickness)
+                    : metrics.isVertical ? metrics.crossPct(72) : (dashboardGrid.implicitHeight + (bar.dropdownWidgetPadding * 2) - bar.barThickness);
+                dropdownFilletRadius: barWindow.dashboardFull ? 0 : metrics.radiusXL;
+                dropdownCornerRadius: barWindow.dashboardFull ? 0 : metrics.radiusXL
               }
             },
             State {
@@ -986,6 +1194,16 @@ Scope {
                 target: bar;
                 dropdownWidth: metrics.isVertical ? metrics.longPct(70) : metrics.longPct(50);
                 dropdownHeight: metrics.isVertical ? metrics.crossPct(36) : metrics.crossPct(10);
+                dropdownFilletRadius: metrics.radiusXL;
+                dropdownCornerRadius: metrics.radiusXL
+              }
+            },
+            State {
+              name: "control_center"
+              PropertyChanges {
+                target: bar;
+                dropdownWidth: (metrics.isVertical ? controlCenterWidget.panelHeight : controlCenterWidget.panelWidth) + bar.dropdownWidgetPadding * 2;
+                dropdownHeight: controlCenterWidget.topPad + (metrics.isVertical ? controlCenterWidget.panelWidth : controlCenterWidget.panelHeight) + bar.dropdownWidgetPadding;
                 dropdownFilletRadius: metrics.radiusXL;
                 dropdownCornerRadius: metrics.radiusXL
               }
@@ -1107,8 +1325,8 @@ Scope {
             monitorName: barWindow.hyprMonitor?.name ?? ""
             isVertical: metrics.isVertical
             anchors {
-              right: metrics.isVertical ? undefined : timeDisplay.left
-              bottom: metrics.isVertical ? timeDisplay.top : undefined
+              right: metrics.isVertical ? undefined : ccBell.left
+              bottom: metrics.isVertical ? ccBell.top : undefined
               verticalCenter: metrics.isVertical ? undefined : parent.verticalCenter
               horizontalCenter: metrics.isVertical ? parent.horizontalCenter : undefined
               rightMargin: metrics.isVertical ? 0 : metrics.marginBar
@@ -1118,6 +1336,67 @@ Scope {
 
           // Clock at the far END of the long axis (right / bottom). Vertical bars
           // are too thin for hh:mm:ss, so stack hh over mm there.
+          // Control center bell (do-not-disturb glyph when DND is on) with a
+          // small badge counting waiting notifications; grey under DND, gone at 0.
+          // Click (bell or clock) toggles the panel here; right click toggles DND.
+          Item {
+            id: ccBell
+            width: bellGrid.width
+            height: bellGrid.height
+            anchors {
+              right: metrics.isVertical ? undefined : timeDisplay.left
+              bottom: metrics.isVertical ? timeDisplay.top : undefined
+              verticalCenter: metrics.isVertical ? undefined : parent.verticalCenter
+              horizontalCenter: metrics.isVertical ? parent.horizontalCenter : undefined
+              rightMargin: metrics.isVertical ? 0 : metrics.marginBar
+              bottomMargin: metrics.isVertical ? metrics.marginBar : 0
+            }
+            readonly property int waiting: controlCenter.waiting
+
+            Grid {
+              id: bellGrid
+              columns: metrics.isVertical ? 1 : 2
+              spacing: metrics.spacingTiny
+              horizontalItemAlignment: Grid.AlignHCenter
+              verticalItemAlignment: Grid.AlignVCenter
+              Text {
+                text: controlCenter.dnd ? "󰂛" : ccBell.waiting > 0 ? "󰂞" : "󰂚"
+                color: bar.state === "control_center" ? Theme.colors.textPrimary : Theme.colors.textMuted
+                font.pixelSize: metrics.fontNormal
+                font.family: Theme.fonts.mono
+                font.bold: true
+              }
+              Rectangle {
+                visible: ccBell.waiting > 0
+                width: Math.max(height, bellBadge.implicitWidth + metrics.spacingSmall * 1.5)
+                height: bellBadge.implicitHeight + metrics.s(2)
+                radius: height / 2
+                color: controlCenter.dnd ? Theme.colors.inset : Theme.colors.accent
+                Text {
+                  id: bellBadge
+                  anchors.centerIn: parent
+                  text: ccBell.waiting > 99 ? "99+" : ccBell.waiting
+                  color: controlCenter.dnd ? Theme.colors.textSecondary : Theme.colors.panelDeep
+                  font.pixelSize: metrics.fontTiny * 0.9
+                  font.family: Theme.fonts.mono
+                  font.bold: true
+                }
+              }
+            }
+            MouseArea {
+              anchors.fill: parent
+              anchors.margins: -metrics.spacingSmall
+              acceptedButtons: Qt.LeftButton | Qt.RightButton
+              cursorShape: Qt.PointingHandCursor
+              onClicked: mouse => {
+                if (mouse.button === Qt.RightButton) { controlCenter.setDnd(!controlCenter.dnd); return }
+                let showing = bar.state === "control_center" && controlCenter.tab === "notifications"
+                controlCenter.tab = "notifications"
+                bar.state = showing ? "normal" : "control_center"
+              }
+            }
+          }
+
           Text {
             id: timeDisplay
             horizontalAlignment: Text.AlignHCenter
@@ -1144,6 +1423,13 @@ Scope {
             }
 
             Component.onCompleted: updateTime()
+
+            MouseArea {
+              anchors.fill: parent
+              anchors.margins: -metrics.spacingSmall
+              cursorShape: Qt.PointingHandCursor
+              onClicked: bar.state = bar.state === "control_center" ? "normal" : "control_center"
+            }
           }
 
           Timer {
@@ -1373,6 +1659,7 @@ Scope {
                 font.bold: true
               }
               Text {
+                font.features: { "tnum": 1, "lnum": 1 }
                 text: parseFloat(root.cpuLoad).toFixed(0) + "%"
                 color: Theme.colors.blue
                 font.pixelSize: metrics.fontNormal
@@ -1406,6 +1693,7 @@ Scope {
                 font.bold: true
               }
               Text {
+                font.features: { "tnum": 1, "lnum": 1 }
                 text: parseFloat(root.tempValue).toFixed(0) + "°C"
                 color: {
                   let temp = parseFloat(root.tempValue);
@@ -1446,6 +1734,7 @@ Scope {
                 font.bold: true
               }
               Text {
+                font.features: { "tnum": 1, "lnum": 1 }
                 text: root.batteryPercent + "%"
                 color: {
                   let level = parseInt(root.batteryPercent);
@@ -1472,6 +1761,8 @@ Scope {
             left: metrics.isVertical ? parent.left : undefined
             horizontalCenter: metrics.isVertical ? undefined : parent.horizontalCenter
             verticalCenter: metrics.isVertical ? parent.verticalCenter : undefined
+            horizontalCenterOffset: metrics.isVertical ? 0 : bar.pocketCenter - bar.barLong / 2
+            verticalCenterOffset: metrics.isVertical ? bar.pocketCenter - bar.barLong / 2 : 0
           }
 
           WallpaperSelectorWidget {}
@@ -1488,10 +1779,17 @@ Scope {
 
           RadarSettingsWidget {}
 
-          // Dashboard grid, built from the active preset (DashboardConfig.qml /
-          // presets.json). Horizontal: `columns` equal-width columns, content-driven
-          // height. Vertical: the preset's portrait block, or an automatic re-pack.
-          // Rows may be fractional; row r starts r pitches down.
+          ControlCenterWidget {
+            id: controlCenterWidget
+            service: controlCenter
+          }
+
+          // Dashboard, built from the active preset (DashboardConfig.qml /
+          // presets.json). A preset with "tabs" gets the slim tab strip on top
+          // and one DashGrid page per tab (only the current one shows); a plain
+          // preset is a single page without the strip. Horizontal: `columns`
+          // equal-width columns, content-driven height. Vertical: fills the tall
+          // pocket using the preset's portrait block, or an automatic re-pack.
           Item {
             id: dashboardGrid
             visible: bar.state === "dashboard"
@@ -1508,53 +1806,97 @@ Scope {
             width: metrics.isVertical
               ? (parent.width - bar.barThickness - bar.dropdownWidgetPadding * 2)
               : (parent.width - (bar.dropdownWidgetPadding * 2))
-            height: metrics.isVertical ? (parent.height - bar.dropdownWidgetPadding * 2) : implicitHeight
+            height: metrics.isVertical ? (parent.height - bar.dropdownWidgetPadding * 2) : (full ? fullGridHeight : implicitHeight)
 
-            property real widgetHeight: metrics.dashWidgetHeight
-            property real colSpacing: metrics.spacingNormal
+            // Fullscreen: the grid gets the whole monitor (minus the bar and the
+            // pocket padding) and each page solves its row pitch from that, so a
+            // preset's rows fill it; columns already follow the pocket width.
+            // Computed from the screen size only — the pocket is sized from the
+            // grid in the normal state, so the other direction would loop.
+            readonly property bool full: barWindow.dashboardFull
+            readonly property real fullGridHeight: metrics.isVertical
+              ? metrics.longPct(100) - bar.dropdownWidgetPadding * 2
+              : metrics.crossPct(100) - bar.barThickness - bar.dropdownWidgetPadding
+
+            // Pages for this screen's orientation. Re-evaluates when the preset
+            // changes (hot reload / IPC) or the monitor rotates.
+            readonly property var preset: dashboardConfig.activePreset
+            readonly property var tabs: dashboardConfig.tabsOf(preset)
+            readonly property bool tabbed: tabs.length > 1
+            readonly property int tab: Math.max(0, Math.min(barWindow.dashTab, tabs.length - 1))
+            readonly property var layouts: tabs.map((t, i) => dashboardConfig.layoutFor(preset, metrics.isVertical, i))
+            readonly property var layout: layouts[tab] ?? ({ columns: 1, rows: 0, widgets: [] })
+            // The tallest page sets the pocket; shorter ones stretch their rows to it.
+            readonly property real rows: layouts.reduce((m, l) => Math.max(m, l.rows), 0)
+            // Pocket length along the bar when horizontal (% of the long axis).
+            readonly property real widthPercent: preset?.widthPercent ?? 60
+
             property real rowSpacing: metrics.spacingNormal
             property real topPad: metrics.s(5)
             property real bottomPad: metrics.spacingNormal
+            readonly property real stripH: tabbed ? Math.round(metrics.s(30) * (full ? 1.15 : 1)) : 0
+            readonly property real stripGap: tabbed ? metrics.spacingNormal : 0
+            function rowH(span) { return span * metrics.dashWidgetHeight + (span - 1) * rowSpacing }
 
-            readonly property var layout: dashboardConfig.layoutFor(dashboardConfig.activePreset, metrics.isVertical)
-            readonly property int columns: Math.max(1, layout.columns)
-            readonly property real colWidth: (width - colSpacing * (columns - 1)) / columns
-            readonly property real widthPercent: dashboardConfig.activePreset?.widthPercent ?? 60
+            // Pointer activity anywhere over the dashboard keeps it awake (passive).
+            HoverHandler {
+              id: dashActivity
+              enabled: Dash.standbyEnabled
+              onPointChanged: dashState.poke()
+              onHoveredChanged: dashState.poke()
+            }
 
-            function rowY(row) { return row * (widgetHeight + rowSpacing) }
-            function rowH(span) { return span * widgetHeight + (span - 1) * rowSpacing }
-            function colX(col) { return col * (colWidth + colSpacing) }
-            function colW(span) { return span * colWidth + (span - 1) * colSpacing }
+            // Natural height of the portrait stack (content-driven pocket).
+            property real verticalContentHeight: stripH + stripGap + rowH(rows)
 
-            property real verticalContentHeight: rowH(layout.rows)
-            implicitHeight: topPad + rowH(layout.rows) + bottomPad
+            // Only used to size the horizontal pocket (content-driven).
+            implicitHeight: topPad + verticalContentHeight + bottomPad
+
+            DashTabStrip {
+              id: tabStrip
+              visible: dashboardGrid.tabbed
+              y: dashboardGrid.topPad
+              width: parent.width
+              height: dashboardGrid.stripH
+              z: 3
+              tabs: dashboardGrid.tabs
+              current: dashboardGrid.tab
+              fontPx: Math.round(metrics.fontSmall * (dashboardGrid.full ? 1.15 : 1))
+              onPicked: index => barWindow.setTab(index)
+            }
 
             Item {
+              id: tabBody
               anchors.fill: parent
-              anchors.topMargin: dashboardGrid.topPad
+              anchors.topMargin: dashboardGrid.topPad + dashboardGrid.stripH + dashboardGrid.stripGap
               anchors.bottomMargin: dashboardGrid.bottomPad
+              // keeps the sliding pages inside the pocket during a switch
+              clip: dashboardGrid.tabbed
 
               Repeater {
-                model: dashboardGrid.layout.widgets
-
-                // One Loader per preset entry; the registry maps `type` to a file.
-                // Options are read from the layout by index: model conversion
-                // would turn JS arrays into Qt sequences.
-                Loader {
+                model: dashboardGrid.tabs.length
+                DashGrid {
                   required property int index
-                  required property var modelData
-                  x: dashboardGrid.colX(modelData.col)
-                  y: dashboardGrid.rowY(modelData.row)
-                  width: dashboardGrid.colW(modelData.colSpan)
-                  height: dashboardGrid.rowH(modelData.rowSpan)
-
-                  Component.onCompleted: {
-                    let cell = dashboardGrid.layout.widgets[index]
-                    let entry = dashboardConfig.registry[cell.type]
-                    setSource(Qt.resolvedUrl(entry.file), Object.assign({ options: cell.options }, entry.props ?? {}))
-                  }
+                  anchors.fill: parent
+                  layout: dashboardGrid.layouts[index] ?? ({ columns: 1, rows: 0, widgets: [] })
+                  current: index === dashboardGrid.tab
+                  dir: barWindow.tabDir
+                  rowSpacing: dashboardGrid.rowSpacing
                 }
               }
+            }
+
+            // Standby veil: a panel-coloured wash over the cards that lowers the
+            // contrast after Dash.standbyMs idle; it settles slowly and wakes on
+            // the next pointer movement. Never takes input.
+            Rectangle {
+              visible: Dash.standbyEnabled && opacity > 0.001
+              anchors.fill: parent
+              anchors.topMargin: dashboardGrid.topPad - metrics.s(2)
+              z: 2
+              color: Theme.colors.panelDeep
+              opacity: dashState.standby ? Dash.standbyVeil : 0
+              Behavior on opacity { NumberAnimation { duration: dashState.standby ? Dash.standbyFade : Motion.enter; easing.type: dashState.standby ? Motion.easeAmbient : Motion.easeIn } }
             }
           }
         }

@@ -1,0 +1,9 @@
+{"state":"ok","stale":false,"events":[
+ {"summary":"Out of office","start":"TODAYT00:00:00","end":"TOMORROWT00:00:00","all_day":true,"calendar":"Personal","location":"","skip":false,"verified":true},
+ {"summary":"Standup","start":"TODAYT09:30:00","end":"TODAYT09:45:00","all_day":false,"calendar":"Work","location":"Meet","skip":false,"verified":true},
+ {"summary":"Dentist","start":"TODAYT13:00:00","end":"TODAYT14:00:00","all_day":false,"calendar":"Personal","location":"Main St","skip":false,"verified":true},
+ {"summary":"Budget review (declined)","start":"TODAYT15:00:00","end":"TODAYT16:00:00","all_day":false,"calendar":"Work","location":"","skip":true,"verified":true},
+ {"summary":"Gym","start":"TODAYT18:00:00","end":"TODAYT19:00:00","all_day":false,"calendar":"Personal","location":"","skip":false,"verified":true},
+ {"summary":"Dinner at La Casa","start":"TODAYT20:00:00","end":"TODAYT22:00:00","all_day":false,"calendar":"Personal","location":"La Casa","skip":false,"verified":false},
+ {"summary":"Flight to Oslo","start":"TOMORROWT07:15:00","end":"TOMORROWT15:40:00","all_day":false,"calendar":"Travel","location":"JFK T1","skip":false,"verified":true}
+]}

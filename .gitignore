@@ -25,3 +25,11 @@ __pycache__/
 QtProject.conf
 # timestamped backups (hyprlock.conf.bak-2026-09-30-crt etc.)
 *.bak-*
+
+# personal hypr layer (dotlocal overlay)
+hypr/personal.lua
+quickshell/secrets.env
+wallpapers/local.conf
+# agent/manual backup copies
+*.bak[0-9]-*
+*.orig

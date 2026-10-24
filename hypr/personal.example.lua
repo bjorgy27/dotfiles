@@ -1,0 +1,5 @@
+-- Personal settings shared by all of Beck's machines. Copy to personal.lua
+-- (gitignored) and keep it the same everywhere; what differs per machine
+-- (monitors, startup commands) goes in perdevice.lua, which is loaded after
+-- this file and can override it. scripts/dotlocal.sh keeps both in sync
+-- between machines (scripts/dotlocal.manifest).

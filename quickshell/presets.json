@@ -205,6 +205,109 @@
           "rowSpan": 1.2
         }
       ]
+    },
+    "tabbed": {
+      "$comment": "Tabbed dashboard (upstream DashGrid + tab strip). Switch tabs by clicking, the wheel over the strip, SUPER+TAB / SUPER+SHIFT+TAB, or qs ipc call dashboard setTab <name>.",
+      "widthPercent": 60,
+      "tabs": [
+        {
+          "name": "main",
+          "label": "Main",
+          "icon": "󰕰",
+          "columns": 6,
+          "widgets": [
+            {
+              "type": "canvas",
+              "col": 0,
+              "row": 0,
+              "colSpan": 2,
+              "rowSpan": 3.8
+            },
+            {
+              "type": "systemstats",
+              "col": 0,
+              "row": 3.8,
+              "rowSpan": 1.6
+            },
+            {
+              "type": "miscstats",
+              "col": 1,
+              "row": 3.8,
+              "rowSpan": 1.6
+            },
+            {
+              "type": "radar",
+              "col": 2,
+              "row": 0,
+              "colSpan": 4,
+              "rowSpan": 4.2
+            },
+            {
+              "type": "weather",
+              "col": 2,
+              "row": 4.2,
+              "colSpan": 2,
+              "rowSpan": 1.2
+            },
+            {
+              "type": "network",
+              "col": 4,
+              "row": 4.2,
+              "colSpan": 2,
+              "rowSpan": 1.2
+            }
+          ]
+        },
+        {
+          "name": "agenda",
+          "label": "Agenda",
+          "icon": "󰃰",
+          "columns": 1,
+          "widgets": [
+            {
+              "type": "calendar",
+              "col": 0,
+              "row": 0,
+              "colSpan": 1,
+              "rowSpan": 5.4
+            }
+          ]
+        },
+        {
+          "name": "printer",
+          "label": "Printer",
+          "icon": "󰐪",
+          "columns": 4,
+          "widgets": [
+            {
+              "type": "bambu",
+              "col": 0,
+              "row": 0,
+              "colSpan": 2,
+              "rowSpan": 1.8
+            },
+            {
+              "type": "systemstats",
+              "col": 2,
+              "row": 0,
+              "rowSpan": 1.8
+            },
+            {
+              "type": "miscstats",
+              "col": 3,
+              "row": 0,
+              "rowSpan": 1.8
+            },
+            {
+              "type": "network",
+              "col": 0,
+              "row": 1.8,
+              "colSpan": 4,
+              "rowSpan": 1.2
+            }
+          ]
+        }
+      ]
     }
   }
 }

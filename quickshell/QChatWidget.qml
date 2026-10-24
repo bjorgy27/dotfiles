@@ -2,6 +2,8 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Widgets
+import "QMd.js" as Md
+import "QHl.js" as Hl
 
 // Q chat panel (SUPER+A): type or talk to Q from the bar, voice and text in one log. Lives in the right-edge
 // drawer in shell.qml (qDrawer), which sizes it and slides it in while bar.state is "q_chat".
@@ -26,6 +28,10 @@ Item {
   readonly property color inkDim: "#a49cbc"
   readonly property color inkMute: "#6d6589"
   readonly property color glass: Qt.rgba(0.08, 0.06, 0.16, 0.78)
+  // Markdown in Q's replies (QMd.js -> QMdView blocks, code highlighted by QHl.js), in the Q Galaxy inks
+  readonly property var mdColors: ({ text: "" + ink, strong: "#ffffff", muted: "" + inkMute, code: "" + gold,
+                                     codeBg: "#1d1733", link: "#9db8ff",
+                                     border: "" + Qt.rgba(0.6, 0.45, 0.9, 0.35), th: "#1d1733", quote: "#c9a7ff" })
 
   readonly property string python: root.home + "/.local/share/q-voice/venv/bin/python"
   readonly property string client: root.home + "/.config/scripts/q_voice.py"
@@ -534,6 +540,36 @@ Item {
       font.letterSpacing: metrics.s(3)
       font.capitalization: Font.AllUppercase
     }
+    // voice switch: off = replies arrive as text only, nothing is synthesized or played (q_voice.py voice_on)
+    Rectangle {
+      anchors.verticalCenter: parent.verticalCenter
+      width: voiceLbl.implicitWidth + metrics.s(14); height: voiceLbl.implicitHeight + metrics.s(4)
+      radius: height / 2
+      color: voiceHover.containsMouse ? Qt.rgba(0.83, 0.69, 0.38, 0.14) : "transparent"
+      border.width: 1; border.color: chat.voiceOn ? chat.gold : chat.goldDim
+      Text {
+        id: voiceLbl
+        anchors.centerIn: parent
+        text: chat.voiceOn ? "󰕾 VOICE" : "󰖁 TEXT"
+        color: chat.voiceOn ? chat.gold : chat.inkMute
+        font.family: "monospace"; font.pixelSize: metrics.s(11); font.letterSpacing: metrics.s(1)
+      }
+      MouseArea { id: voiceHover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+        onClicked: chat.setVoice(!chat.voiceOn) }
+    }
+  }
+  property bool voiceOn: true
+  readonly property string voiceFile: root.home + "/.config/q-voice/voice"
+  function setVoice(on) {
+    voiceOn = on
+    voiceWrite.command = ["bash", "-c", "mkdir -p \"$(dirname \"$1\")\" && echo \"$2\" > \"$1\"", "_", voiceFile, on ? "on" : "off"]
+    voiceWrite.running = true
+  }
+  Process { id: voiceWrite }
+  Process {
+    running: true
+    command: ["cat", chat.voiceFile]
+    stdout: StdioCollector { onStreamFinished: chat.voiceOn = text.trim().toLowerCase() !== "off" }
   }
   // background agents: a little round icon each in the header's top right, beside the name. Hover one for what
   // it is, click it for its card under the header; a working agent gets the comet ring like the portrait.
@@ -751,6 +787,15 @@ Item {
       readonly property var media: mine ? [] : (text.match(/^[ \t]*MEDIA:\S.*$/gm) || []).map(l => l.trim().slice(6).trim())
       readonly property string shown: mine ? text : chat.stripTags(text.replace(/^[ \t]*MEDIA:\S.*$\n?/gm, "")).replace(/\s+$/, "")
       readonly property var pics: (imgs ? imgs.split("\n") : []).concat(media.filter(p => chat.isImage(p)))
+      // Q's replies render as markdown, except while a word is being read aloud (the gold hl needs the plain path)
+      readonly property bool md: row.role === "q" && row.hl < 0
+      readonly property int mdCut: (row.md && row.cut >= 0) ? Md.safeCut(row.shown, Math.min(row.cut, row.shown.length)) : -1
+      readonly property string mdMain: row.md ? (row.mdCut >= 0 ? row.shown.slice(0, row.mdCut) : row.shown) : ""
+      readonly property string mdDim: row.mdCut >= 0 ? row.shown.slice(row.mdCut) : ""
+      readonly property var mainR: row.md ? Md.render(row.mdMain, { c: chat.mdColors, px: metrics.s(15), pending: row.pending && row.mdDim.trim() === "" })
+                                          : ({ blocks: [], plain: "", wide: false })
+      readonly property var dimR: row.mdDim.trim() !== "" ? Md.render(row.mdDim, { c: chat.mdColors, px: metrics.s(15), pending: row.pending })
+                                                         : ({ blocks: [], plain: "", wide: false })
       readonly property var files: media.filter(p => !chat.isImage(p))
       readonly property real maxW: (log.width - chat.gutter) * (mine ? 0.8 : 0.86)
       width: log.width - chat.gutter
@@ -854,8 +899,8 @@ Item {
         y: (who.visible ? who.height : 0) + (row.mine && picRow.visible ? picRow.height + metrics.s(6) : 0)
         anchors.right: row.mine ? parent.right : undefined
         anchors.left: row.mine ? undefined : parent.left
-        width: Math.min(tm.advanceWidth + padL + padR + metrics.s(2), row.maxW)
-        height: body.implicitHeight + metrics.s(22)
+        width: (row.md && (row.mainR.wide || row.dimR.wide)) ? row.maxW : Math.min(tm.advanceWidth + padL + padR + metrics.s(2), row.maxW)
+        height: (row.md ? mdCol.implicitHeight : body.implicitHeight) + metrics.s(22)
         radius: metrics.s(14)
         color: row.role === "error" ? Qt.rgba(0.55, 0.08, 0.16, 0.35) : row.mine ? "transparent" : chat.glass
         border.width: row.mine ? 0 : 1
@@ -878,12 +923,38 @@ Item {
           radius: width / 2
           color: row.role === "error" ? "#ff7a8e" : chat.gold
         }
-        TextEdit {
-          id: body
+        Column {
+          id: mdCol
+          visible: row.md
           x: bubble.padL
           y: metrics.s(11)
           width: parent.width - bubble.padL - bubble.padR
-          text: row.richText()
+          spacing: metrics.s(4)
+          QMdView {
+            visible: row.mainR.blocks.length > 0 || (row.pending && row.mdDim.trim() === "")
+            width: parent.width
+            blocks: row.mainR.blocks
+            pending: row.pending && row.mdDim.trim() === ""
+            textColor: chat.ink
+            fontPx: metrics.s(15)
+          }
+          QMdView {
+            visible: row.dimR.blocks.length > 0
+            width: parent.width
+            blocks: row.dimR.blocks
+            pending: row.pending
+            lead: "󰖁 "
+            textColor: chat.inkMute
+            fontPx: metrics.s(15)
+          }
+        }
+        TextEdit {
+          id: body
+          visible: !row.md
+          x: bubble.padL
+          y: metrics.s(11)
+          width: parent.width - bubble.padL - bubble.padR
+          text: row.md ? "" : row.richText()
           readOnly: true
           selectByMouse: true
           wrapMode: TextEdit.Wrap

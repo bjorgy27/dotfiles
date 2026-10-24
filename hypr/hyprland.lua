@@ -159,6 +159,12 @@ hl.bind("F8",                         hl.dsp.exec_cmd("brightnessctl --device='p
 
 hl.bind(mainMod .. " + N",            hl.dsp.global("quickshell:toggleDashboard"))
 hl.bind(mainMod .. " + SHIFT + N",    hl.dsp.global("quickshell:dashboardNextPreset"))
+hl.bind(mainMod .. " + CTRL + N",     hl.dsp.global("quickshell:toggleDashboardFullscreen"))
+hl.bind(mainMod .. " + TAB",          hl.dsp.global("quickshell:dashboardNextTab"))
+hl.bind(mainMod .. " + SHIFT + TAB",  hl.dsp.global("quickshell:dashboardPrevTab"))
+-- Control center (notifications + quick settings) in the pocket under the clock
+hl.bind(mainMod .. " + C",            hl.dsp.global("quickshell:toggleControlCenter"))
+hl.bind(mainMod .. " + SHIFT + C",    hl.dsp.global("quickshell:toggleNotifications"))
 
 -- Voice chat with Q (scripts/q_voice.sh; needs ~/.config/q-voice/env, see q_voice.env.example)
 hl.bind(mainMod .. " + T",            hl.dsp.exec_cmd("~/.config/scripts/q_voice.sh toggle"))
@@ -170,6 +176,12 @@ hl.bind(mainMod .. " + R",            hl.dsp.global("quickshell:toggleAppSelecto
 
 hl.bind(mainMod .. " + mouse:272",    hl.dsp.window.drag(),   { mouse = true })
 hl.bind(mainMod .. " + mouse:273",    hl.dsp.window.resize(), { mouse = true })
+
+-- Personal layer shared by Beck's machines: ~/.config/hypr/personal.lua
+-- (gitignored; see personal.example.lua, scripts/dotlocal.sh). Loaded before
+-- perdevice.lua so a machine can still override it.
+local personal = os.getenv("HOME") .. "/.config/hypr/personal.lua"
+if io.open(personal, "r") then dofile(personal) end
 
 -- Loaded before split-monitor-workspaces so DEVICE.monitor_priority is known.
 local perdevice = os.getenv("HOME") .. "/.config/hypr/perdevice.lua"

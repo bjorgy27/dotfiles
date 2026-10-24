@@ -1,0 +1,16 @@
+# Local overlay files: personal and per-machine config that is not in the repo.
+# scripts/dotlocal.sh copies them between the live locations below and the
+# overlay store (~/.config/dotlocal, or $DOTLOCAL_DIR):
+#   shared  -> <store>/shared/<name>        same on all of your machines
+#   host    -> <store>/hosts/<host>/<name>  this machine only (<host> = uname -n)
+# Flag "secret": dry runs never print its contents.
+# Live paths: $DOTFILES = this repo, ~ = $HOME. Missing files are skipped.
+#
+# scope   name                            live path                                 flags
+shared    hypr/personal.lua               $DOTFILES/hypr/personal.lua
+host      hypr/perdevice.lua              $DOTFILES/hypr/perdevice.lua
+host      wallpapers/local.conf           $DOTFILES/wallpapers/local.conf
+host      quickshell/presets.local.json   $DOTFILES/quickshell/presets.local.json
+shared    quickshell/secrets.env          $DOTFILES/quickshell/secrets.env          secret
+host      q-voice/env                     ~/.config/q-voice/env                     secret
+host      quickshell/local.js             $DOTFILES/quickshell/local.js

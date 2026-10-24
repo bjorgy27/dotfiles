@@ -5,3 +5,6 @@ CatppuccinMocha CatppuccinMocha.qml
 CatppuccinLatte CatppuccinLatte.qml
 CatppuccinFrappe CatppuccinFrappe.qml
 CatppuccinMacchiato CatppuccinMacchiato.qml
+singleton Motion Motion.qml
+singleton Dash Dash.qml
+singleton Status Status.qml

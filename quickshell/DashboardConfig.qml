@@ -14,10 +14,16 @@
 //
 // IPC (see `qs ipc show`):
 //   qs ipc call dashboard setPreset <name> | nextPreset | getPreset | listPresets | reload
+//   qs ipc call dashboard toggleFullscreen            (focused monitor)
+//   qs ipc call dashboard toggleOn <monitor> | toggleFullscreenOn <monitor>
+//   qs ipc call dashboard nextTab | prevTab | setTab <name|number> | getTab | listTabs
+//   qs ipc call dashboard setTabOn <monitor> <name|number>
+//                                       (tabbed presets; focused or named monitor)
 
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 
 Item {
   id: config
@@ -36,7 +42,8 @@ Item {
     "weather":     { file: "WeatherWidget.qml" },
     "network":     { file: "NetworkStatsWidget.qml" },
     "music":       { file: "MusicWidget.qml" },
-    "bambu":       { file: "BambuWidget.qml" }
+    "bambu":       { file: "BambuWidget.qml" },
+    "calendar":    { file: "CalendarWidget.qml" }
   })
 
   readonly property string configDir: root.home + "/.config/quickshell"
@@ -219,6 +226,51 @@ Item {
       localFile.reload()
     }
 
+    // Same as the toggleDashboardFullscreen shortcut: acts on the focused monitor
+    function toggleFullscreen(): string {
+      root.fullTarget = ""
+      root.fullCounter++
+      return "toggled dashboard fullscreen on the focused monitor"
+    }
+    // Open/close the dashboard on a named monitor (hyprctl monitors), without moving focus
+    function toggleOn(monitor: string): string {
+      root.toggleTarget = "dashboard"
+      root.toggleMonitor = monitor
+      root.toggleCounter++
+      return "toggled dashboard on " + monitor
+    }
+    // The same for fullscreen
+    function toggleFullscreenOn(monitor: string): string {
+      root.fullTarget = monitor
+      root.fullCounter++
+      return "toggled dashboard fullscreen on " + monitor
+    }
+
+    // Tabs of a tabbed preset, on the focused monitor (a closed dashboard opens
+    // instead of stepping). setTab takes a tab name or its 1-based number.
+    function nextTab(): void { root.tabCommand("next", "", "") }
+    function prevTab(): void { root.tabCommand("prev", "", "") }
+    function setTab(tab: string): string {
+      let i = config.tabIndex(config.activePreset, tab)
+      if (i < 0) return "unknown tab \"" + tab + "\" (tabs: " + config.tabsOf(config.activePreset).map(t => t.name).join(", ") + ")"
+      root.tabCommand("set", tab, "")
+      return "tab: " + config.tabsOf(config.activePreset)[i].name
+    }
+    // The same on a named monitor (opens its dashboard there without moving focus)
+    function setTabOn(monitor: string, tab: string): string {
+      let i = config.tabIndex(config.activePreset, tab)
+      if (i < 0) return "unknown tab \"" + tab + "\""
+      root.tabCommand("set", tab, monitor)
+      return "tab on " + monitor + ": " + config.tabsOf(config.activePreset)[i].name
+    }
+    function getTab(): string {
+      let m = Hyprland.focusedMonitor?.name ?? ""
+      return root.tabNames[m] || (config.tabsOf(config.activePreset)[0]?.name ?? "")
+    }
+    function listTabs(): string {
+      let cur = getTab()
+      return config.tabsOf(config.activePreset).map((t, i) => (t.name === cur ? "* " : "  ") + (i + 1) + " " + t.name).join("\n")
+    }
   }
 
   // Next preset in file order (SUPER+SHIFT+N and the nextPreset IPC call).
@@ -275,30 +327,61 @@ Item {
     return out
   }
 
-  function normalizePreset(name, raw, where) {
-    if (typeof raw !== "object" || raw === null) {
-      console.error("dashboard: " + where + ": preset must be an object; skipped")
-      return null
-    }
+  // The grid part of a preset or of one of its tabs: columns + widgets (+ portrait).
+  function normalizeLayout(raw, where, defaults) {
     let widgets = normalizeWidgets(raw.widgets, where)
     if (!widgets) return null
-    let p = {
-      name: name,
-      columns: Math.max(1, Math.floor(num(raw.columns, 4))),
-      portraitColumns: Math.max(1, Math.floor(num(raw.portraitColumns, 2))),
-      widthPercent: Math.min(100, Math.max(10, num(raw.widthPercent, 60))),
+    let l = {
+      columns: Math.max(1, Math.floor(num(raw.columns, defaults.columns))),
+      portraitColumns: Math.max(1, Math.floor(num(raw.portraitColumns, defaults.portraitColumns))),
       widgets: widgets,
       portrait: null
     }
     if (raw.portrait !== undefined) {
       if (typeof raw.portrait === "object" && raw.portrait !== null) {
         let pw = normalizeWidgets(raw.portrait.widgets, where + " portrait")
-        if (pw) p.portrait = { columns: Math.max(1, Math.floor(num(raw.portrait.columns, p.portraitColumns))), widgets: pw }
+        if (pw) l.portrait = { columns: Math.max(1, Math.floor(num(raw.portrait.columns, l.portraitColumns))), widgets: pw }
       } else {
         console.warn("dashboard: " + where + ": \"portrait\" must be an object; using automatic reflow")
       }
     }
-    return p
+    return l
+  }
+
+  // A preset is one grid, or with "tabs" several (one page each; see README.md).
+  // A tabbed preset's `widgets` is every tab's widgets together, so the
+  // services and the health summary cover all tabs.
+  function normalizePreset(name, raw, where) {
+    if (typeof raw !== "object" || raw === null) {
+      console.error("dashboard: " + where + ": preset must be an object; skipped")
+      return null
+    }
+    let defaults = { columns: num(raw.columns, 4), portraitColumns: num(raw.portraitColumns, 2) }
+    let p = { name: name, widthPercent: Math.min(100, Math.max(10, num(raw.widthPercent, 60))), tabs: null }
+    if (raw.tabs === undefined) {
+      let l = normalizeLayout(raw, where, defaults)
+      return l ? Object.assign(p, l) : null
+    }
+    if (!Array.isArray(raw.tabs)) {
+      console.error("dashboard: " + where + ": \"tabs\" must be an array; skipped")
+      return null
+    }
+    let tabs = []
+    for (let i = 0; i < raw.tabs.length; i++) {
+      let t = raw.tabs[i], tw = where + " tabs[" + i + "]"
+      if (typeof t !== "object" || t === null) { console.warn("dashboard: " + tw + ": tab must be an object; skipped"); continue }
+      let l = normalizeLayout(t, tw, defaults)
+      if (!l) continue
+      let tabName = (typeof t.name === "string" && t.name !== "" ? t.name : "tab" + (i + 1)).toLowerCase()
+      tabs.push(Object.assign({ name: tabName, label: typeof t.label === "string" ? t.label : tabName, icon: typeof t.icon === "string" ? t.icon : "" }, l))
+    }
+    if (tabs.length === 0) {
+      console.error("dashboard: " + where + ": no usable tabs; skipped")
+      return null
+    }
+    let all = []
+    for (let t of tabs) all = all.concat(t.widgets, t.portrait ? t.portrait.widgets : [])
+    return Object.assign(p, { columns: tabs[0].columns, portraitColumns: tabs[0].portraitColumns, widgets: all, portrait: null, tabs: tabs })
   }
 
   // Returns { presets, order, active } or null (errors already logged).
@@ -375,12 +458,25 @@ Item {
   }
 
   // === LAYOUT RESOLUTION ===
-  // Resolve a preset into absolute cells for one orientation. Portrait uses
-  // the preset's explicit `portrait` block when present; otherwise the
-  // landscape widget list is re-packed in order into `portraitColumns`
-  // (spans clamped, col/row ignored) — the automatic reflow.
-  function layoutFor(preset, vertical) {
+  // Pages of a preset: its tabs, or the preset itself as the only page.
+  function tabsOf(preset) {
+    if (!preset) return []
+    return preset.tabs ?? [{ name: preset.name, label: preset.name, icon: "" }]
+  }
+  // Tab index for a name or a 1-based number; -1 if there is no such tab.
+  function tabIndex(preset, arg) {
+    let tabs = tabsOf(preset), a = String(arg).trim().toLowerCase()
+    if (/^\d+$/.test(a)) { let n = parseInt(a); return n >= 1 && n <= tabs.length ? n - 1 : -1 }
+    return tabs.findIndex(t => t.name === a)
+  }
+
+  // Resolve a preset (tab `tab` of a tabbed one) into absolute cells for one
+  // orientation. Portrait uses the explicit `portrait` block when present;
+  // otherwise the landscape widget list is re-packed in order into
+  // `portraitColumns` (spans clamped, col/row ignored) — the automatic reflow.
+  function layoutFor(preset, vertical, tab) {
     if (!preset) return { columns: 1, rows: 0, widgets: [] }
+    if (preset.tabs) preset = preset.tabs[Math.max(0, Math.min(tab ?? 0, preset.tabs.length - 1))]
     if (vertical) {
       if (preset.portrait) return pack(preset.portrait.widgets, preset.portrait.columns, true)
       return pack(preset.widgets, preset.portraitColumns, false)

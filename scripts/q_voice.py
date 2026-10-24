@@ -1076,9 +1076,20 @@ def synth_piper(text, prev, nxt, stop):
     yield from _ffmpeg_to_pcm(["-f", "s16le", "-ar", rate, "-ac", "1"], p.stdout, stop)
 
 
+VOICE_FILE = os.path.join(HOME, ".config/q-voice/voice")   # "off" = text only (panel switch); missing = on
+
+
+def voice_on():
+    try:
+        with open(VOICE_FILE) as f:
+            return f.read().strip().lower() != "off"
+    except OSError:
+        return True
+
+
 def tts_chain():
     """Backends to try in order; a backend is only used when its config is present."""
-    if QUIET:
+    if QUIET or not voice_on():
         return []
     have = {"elevenlabs": bool(EL_KEY and EL_VOICE), "gateway": bool(SSH_HOST), "piper": True}
     fns = {"elevenlabs": synth_elevenlabs, "gateway": synth_gateway, "piper": synth_piper}
@@ -1329,7 +1340,7 @@ def run_turn(text, t_speech_end=None, speaker=None):
                         break
                     except Exception as e:  # noqa
                         dbg(f"tts[{name}] failed: {e}")
-                if not ok and not stop.is_set():
+                if not ok and chain and not stop.is_set():
                     dbg("all TTS backends failed")
         finally:
             for f in ahead.values():            # never-drained prefetches (interrupt): close their sockets
