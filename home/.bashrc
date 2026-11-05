@@ -13,3 +13,6 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # Machine-only additions (e.g. PATH for software installed on one box).
 [ -f "$HOME/.bashrc.local" ] && . "$HOME/.bashrc.local"
+
+# OpenClaw Completion
+[ -f '/home/bonzi/.openclaw/completions/openclaw.bash' ] && source '/home/bonzi/.openclaw/completions/openclaw.bash'

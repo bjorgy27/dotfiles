@@ -111,14 +111,25 @@ if [[ $mode == test ]]; then
   [[ -n $LOCK_TEST_PASSWORD ]] && export LOCK_TEST_PASSWORD
 fi
 
-start=$SECONDS
-qs 2>>"$state/lock.log"; rc=$?
-[[ $mode == test || $secs -gt 0 ]] && exit $rc
-(( rc == 0 || rc == 3 )) && exit 0
-# It died. Fall back only if it never got going; a later death is a kill from a
-# TTY, don't lock again. If it had already locked, Hyprland holds the screen on
-# "lockscreen died" and only lets hyprlock in while restore is allowed.
-(( SECONDS - start >= 3 )) && exit "$rc"
-echo "$(date -Is) lock client exited $rc after $((SECONDS - start))s; falling back to hyprlock" >>"$state/lock.log"
+# Up to three tries before hyprlock. A fast death is usually Hyprland still
+# holding a dead lock ("lockscreen died") with restore off: it drops our lock
+# request and the client dies on "invalid object" (2026-10-28), so retries run
+# with the restore window open. Exit 3 (compositor refused) within 3 s is a
+# failure too: the screen is not locked.
+for try in 1 2 3; do
+  start=$SECONDS
+  qs 2>>"$state/lock.log"; rc=$?
+  [[ $mode == test || $secs -gt 0 ]] && exit $rc
+  (( rc == 0 )) && exit 0
+  # A later death is a kill from a TTY or a compositor-ended lock, don't lock
+  # again (an already-held screen stays on "lockscreen died", --recover).
+  (( SECONDS - start >= 3 )) && { (( rc == 3 )) && exit 0; exit "$rc"; }
+  echo "$(date -Is) lock client exited $rc after $((SECONDS - start))s (try $try/3)" >>"$state/lock.log"
+  (( try < 3 )) || break
+  restore_window 10
+  sleep 0.5
+done
+echo "$(date -Is) lock client failed 3 times; falling back to hyprlock" >>"$state/lock.log"
+"$dir/wallpaper.sh" >/dev/null 2>&1   # hyprlock.conf's background link: the current wallpaper
 restore_window 5
 exec hyprlock

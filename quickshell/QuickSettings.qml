@@ -23,6 +23,10 @@ Item {
 
   property var service
   property bool active: false     // page showing: polls Wi-Fi, tracks every audio device
+  // One part only when opened from its bar button ("audio" | "bluetooth" | "wifi"), else all.
+  readonly property string section: service?.section ?? ""
+  function shows(s) { return section === "" || section === s }
+  readonly property real contentHeight: col.implicitHeight
 
   // === AUDIO ===
   readonly property var sink: Pipewire.defaultAudioSink
@@ -90,11 +94,12 @@ Item {
       // --- Toggle tiles ---
       GridLayout {
         Layout.fillWidth: true
-        columns: 2
+        columns: qs.section === "" ? 2 : 1
         rowSpacing: metrics.spacingSmall
         columnSpacing: metrics.spacingSmall
 
         Tile {
+          visible: qs.shows("wifi")
           icon: !qs.wifiOn ? "󰤮" : qs.activeNet ? qs.wifiIcon(qs.activeNet.signal) : "󰤯"
           label: "Wi-Fi"
           detail: qs.wifiConfirm ? "Click again to turn off" : qs.wifiRadio === "missing" ? "nmcli not found" : !qs.wifiOn ? "Off" : qs.activeNet ? qs.activeNet.ssid : "Not connected"
@@ -109,6 +114,7 @@ Item {
           }
         }
         Tile {
+          visible: qs.shows("bluetooth")
           icon: !qs.adapter ? "󰂲" : !qs.adapter.enabled ? "󰂲" : qs.btConnected > 0 ? "󰂱" : "󰂯"
           label: "Bluetooth"
           detail: !qs.adapter ? "No adapter" : !qs.adapter.enabled ? "Off" : qs.btConnected > 0 ? (qs.btConnected === 1 ? qs.btDevices[0].name : qs.btConnected + " connected") : "On"
@@ -117,6 +123,7 @@ Item {
           onClicked: qs.adapter.enabled = !qs.adapter.enabled
         }
         Tile {
+          visible: qs.section === ""
           icon: qs.service.dnd ? "󰂛" : "󰂚"
           label: "Do not disturb"
           detail: qs.service.dnd ? "Bell badge muted" : "Off"
@@ -125,6 +132,7 @@ Item {
         }
         Tile {
           readonly property bool muted: qs.source?.audio?.muted ?? false
+          visible: qs.shows("audio")
           icon: muted ? "󰍭" : "󰍬"
           label: "Microphone"
           detail: !qs.source ? "No input" : muted ? "Muted" : "Live"
@@ -135,22 +143,22 @@ Item {
       }
 
       // --- Audio ---
-      Section { title: "Output"; detail: qs.nodeLabel(qs.sink) }
-      VolumeRow { node: qs.sink; icon: (qs.sink?.audio?.muted ?? false) ? "󰖁" : "󰕾"; accent: Theme.colors.violet }
-      DeviceList { nodes: qs.sinks; current: qs.sink; onPicked: node => Pipewire.preferredDefaultAudioSink = node }
+      Section { visible: qs.shows("audio"); title: "Output"; detail: qs.nodeLabel(qs.sink) }
+      VolumeRow { visible: qs.shows("audio"); node: qs.sink; icon: (qs.sink?.audio?.muted ?? false) ? "󰖁" : "󰕾"; accent: Theme.colors.violet }
+      DeviceList { visible: qs.shows("audio"); nodes: qs.sinks; current: qs.sink; onPicked: node => Pipewire.preferredDefaultAudioSink = node }
 
-      Section { title: "Input"; detail: qs.nodeLabel(qs.source) }
-      VolumeRow { node: qs.source; icon: (qs.source?.audio?.muted ?? false) ? "󰍭" : "󰍬"; accent: Theme.colors.teal }
-      DeviceList { nodes: qs.sources; current: qs.source; onPicked: node => Pipewire.preferredDefaultAudioSource = node }
+      Section { visible: qs.shows("audio"); title: "Input"; detail: qs.nodeLabel(qs.source) }
+      VolumeRow { visible: qs.shows("audio"); node: qs.source; icon: (qs.source?.audio?.muted ?? false) ? "󰍭" : "󰍬"; accent: Theme.colors.teal }
+      DeviceList { visible: qs.shows("audio"); nodes: qs.sources; current: qs.source; onPicked: node => Pipewire.preferredDefaultAudioSource = node }
 
       // --- Bluetooth devices ---
       Section {
-        visible: (qs.adapter?.enabled ?? false) && qs.btDevices.length > 0
+        visible: qs.shows("bluetooth") && (qs.adapter?.enabled ?? false) && qs.btDevices.length > 0
         title: "Bluetooth"
         detail: qs.btDevices.length + " paired"
       }
       Repeater {
-        model: (qs.adapter?.enabled ?? false) ? qs.btDevices : []
+        model: qs.shows("bluetooth") && (qs.adapter?.enabled ?? false) ? qs.btDevices : []
         ListRow {
           required property var modelData
           readonly property bool busy: modelData.state === BluetoothDeviceState.Connecting || modelData.state === BluetoothDeviceState.Disconnecting
@@ -165,12 +173,12 @@ Item {
 
       // --- Wi-Fi networks ---
       Section {
-        visible: qs.wifiOn && qs.networks.length > 0
+        visible: qs.shows("wifi") && qs.wifiOn && qs.networks.length > 0
         title: "Wi-Fi"
         detail: qs.networks.length + " nearby"
       }
       Repeater {
-        model: qs.wifiOn ? qs.networks.slice(0, 8) : []
+        model: qs.shows("wifi") && qs.wifiOn ? qs.networks.slice(0, 8) : []
         ListRow {
           required property var modelData
           readonly property bool open: modelData.security === "" || modelData.security === "--"

@@ -877,7 +877,7 @@ def stream_llm(text, on_delta, stop, holder, speaker=None):
     prefix = (f"[{where}; spoken reply: one to three short sentences unless I ask for detail, "
               f"no lists or markdown{ctx}; {SPEAK}{style}] " if BRIEF else f"[{where}{ctx}; {SPEAK}{style}] ")
     body = {"model": f"openclaw/{AGENT}", "user": USER, "stream": True,
-            "messages": [{"role": "user", "content": prefix + text}]}
+            "messages": [{"role": "user", "content": prefix + text + f" [machine: {DEVICE}]"}]}
     headers = {"Authorization": f"Bearer {GATEWAY_TOKEN}", "Content-Type": "application/json",
                "Accept": "text/event-stream", "Accept-Encoding": "identity"}
     if MODEL:

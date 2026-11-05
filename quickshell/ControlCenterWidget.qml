@@ -19,8 +19,10 @@ Item {
   visible: isOpen
 
   // Pocket size (read by the bar's "control_center" state in shell.qml).
-  readonly property real panelWidth: metrics.s(460)
-  readonly property real panelHeight: Math.min(metrics.s(660), metrics.isVertical ? metrics.longPct(70) : metrics.crossPct(72))
+  // A single quick settings part (bar button) gets a small pocket sized to its content.
+  readonly property bool single: service.section !== "" && service.tab === "settings"
+  readonly property real panelWidth: single ? metrics.s(380) : metrics.s(460)
+  readonly property real panelHeight: Math.min(single ? settingsPage.contentHeight : metrics.s(660), metrics.isVertical ? metrics.longPct(70) : metrics.crossPct(72))
   readonly property real topPad: metrics.s(5)
 
   anchors {
@@ -66,7 +68,8 @@ Item {
   Item {
     id: strip
     width: parent.width
-    height: metrics.s(30)
+    height: cc.single ? 0 : metrics.s(30)
+    visible: !cc.single
 
     WheelHandler {
       acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
@@ -169,11 +172,11 @@ Item {
   // === PAGES ===
   Item {
     id: pages
-    anchors { left: parent.left; right: parent.right; top: strip.bottom; bottom: parent.bottom; topMargin: metrics.spacingNormal }
+    anchors { left: parent.left; right: parent.right; top: strip.bottom; bottom: parent.bottom; topMargin: cc.single ? 0 : metrics.spacingNormal }
     clip: true
 
     Page { index: 0; NotificationsPage {} }
-    Page { index: 1; QuickSettings { active: cc.isOpen && cc.service.tab === "settings"; service: cc.service } }
+    Page { index: 1; QuickSettings { id: settingsPage; active: cc.isOpen && cc.service.tab === "settings"; service: cc.service } }
   }
 
   // A page slides in from the side it comes from, like the dashboard's tabs.

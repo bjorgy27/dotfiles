@@ -532,8 +532,12 @@ Scope {
   property var voiceLevels: new Array(10).fill(0)
   property real voiceLevel: 0
   readonly property bool voiceLive: voiceState === "listening" || voiceState === "speaking"
+  // Display gain for the voice bars: raw mic/sink RMS (0..1) times waveGain, sqrt-compressed, capped at 85%.
+  // Lower waveGain if talking still pins the bars; raise it if quiet speech barely moves them.
+  readonly property real waveGain: 2.5
+  function shapeVoiceLevel(r) { return Math.min(0.85, Math.sqrt(Math.min(1, Math.max(0, r) * waveGain))) }
   function pushVoiceLevel(v) { voiceLevel = v; let h = voiceLevels.slice(1); h.push(v); voiceLevels = h }
-  readonly property string voiceMeterPy: "import sys,struct,math\nb=sys.stdin.buffer\nwhile True:\n d=b.read(1600)\n if not d: break\n n=len(d)//2\n s=struct.unpack('<%dh'%n,d[:n*2])\n r=math.sqrt(sum(x*x for x in s)/max(n,1))/32768.0\n print(min(1.0,r*7))\n"
+  readonly property string voiceMeterPy: "import sys,struct,math\nb=sys.stdin.buffer\nwhile True:\n d=b.read(1600)\n if not d: break\n n=len(d)//2\n s=struct.unpack('<%dh'%n,d[:n*2])\n r=math.sqrt(sum(x*x for x in s)/max(n,1))/32768.0\n print(r)\n"
   // Stopping a Process only signals its bash, so the pipeline is backgrounded under a trap that kills bash's children:
   // a bare `pw-record | python3` outlived it, kept the headset's mic open and pinned it in call mode (2026-10-05).
   // Two fixed meters instead of one that swaps its command: restarting a Process from onVoiceStateChanged ran
@@ -541,12 +545,12 @@ Scope {
   Process {
     running: root.voiceEnabled && root.voiceState === "listening"
     command: ["bash", "-c", "trap 'pkill -P $$' EXIT TERM INT; pw-record --format s16 --rate 16000 --channels 1 --latency 50ms - 2>/dev/null | python3 -u -c \"" + root.voiceMeterPy + "\" & wait"]
-    stdout: SplitParser { onRead: data => { let v = parseFloat(data); if (!isNaN(v)) root.pushVoiceLevel(v) } }
+    stdout: SplitParser { onRead: data => { let v = parseFloat(data); if (!isNaN(v)) root.pushVoiceLevel(root.shapeVoiceLevel(v)) } }
   }
   Process {
     running: root.voiceEnabled && root.voiceState === "speaking"
     command: ["bash", "-c", "trap 'pkill -P $$' EXIT TERM INT; pw-record -P '{ stream.capture.sink = true }' --format s16 --rate 16000 --channels 1 --latency 50ms - 2>/dev/null | python3 -u -c \"" + root.voiceMeterPy + "\" & wait"]
-    stdout: SplitParser { onRead: data => { let v = parseFloat(data); if (!isNaN(v)) root.pushVoiceLevel(v) } }
+    stdout: SplitParser { onRead: data => { let v = parseFloat(data); if (!isNaN(v)) root.pushVoiceLevel(root.shapeVoiceLevel(v)) } }
   }
   // soft motion while decoding / thinking; decay otherwise
   Timer {
@@ -880,6 +884,7 @@ Scope {
           if (!barWindow.isFocused) return
           let open = bar.state === "control_center"
           if (root.ccOp === "close") { if (open) bar.state = "normal"; return }
+          controlCenter.section = ""
           let name = root.ccTab !== "" ? controlCenter.className(root.ccTab) : ""
           let switching = name !== "" && name !== controlCenter.tab
           if (name !== "") controlCenter.tab = name
@@ -1391,6 +1396,7 @@ Scope {
               onClicked: mouse => {
                 if (mouse.button === Qt.RightButton) { controlCenter.setDnd(!controlCenter.dnd); return }
                 let showing = bar.state === "control_center" && controlCenter.tab === "notifications"
+                controlCenter.section = ""
                 controlCenter.tab = "notifications"
                 bar.state = showing ? "normal" : "control_center"
               }
@@ -1428,7 +1434,48 @@ Scope {
               anchors.fill: parent
               anchors.margins: -metrics.spacingSmall
               cursorShape: Qt.PointingHandCursor
-              onClicked: bar.state = bar.state === "control_center" ? "normal" : "control_center"
+              onClicked: { controlCenter.section = ""; bar.state = bar.state === "control_center" ? "normal" : "control_center" }
+            }
+          }
+
+          // Quick settings split into bar buttons beside the camera: each opens
+          // just its part of the quick settings in a small pocket.
+          Grid {
+            id: quickParts
+            columns: metrics.isVertical ? 1 : 3
+            spacing: metrics.spacingSmall
+            horizontalItemAlignment: Grid.AlignHCenter
+            verticalItemAlignment: Grid.AlignVCenter
+            anchors {
+              right: metrics.isVertical ? undefined : screenCapture.left
+              bottom: metrics.isVertical ? screenCapture.top : undefined
+              verticalCenter: metrics.isVertical ? undefined : parent.verticalCenter
+              horizontalCenter: metrics.isVertical ? parent.horizontalCenter : undefined
+              rightMargin: metrics.isVertical ? 0 : metrics.spacingSmall
+              bottomMargin: metrics.isVertical ? metrics.spacingSmall : 0
+            }
+            Repeater {
+              model: [{ s: "audio", icon: "󰕾" }, { s: "bluetooth", icon: "󰂯" }, { s: "wifi", icon: "󰤨" }]
+              Text {
+                required property var modelData
+                readonly property bool current: bar.state === "control_center" && controlCenter.tab === "settings" && controlCenter.section === modelData.s
+                text: modelData.icon
+                color: current ? Theme.colors.textPrimary : Theme.colors.textMuted
+                font.pixelSize: metrics.fontNormal
+                font.family: Theme.fonts.mono
+                font.bold: true
+                MouseArea {
+                  anchors.fill: parent
+                  anchors.margins: -metrics.spacingTiny
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    let showing = parent.current
+                    controlCenter.tab = "settings"
+                    controlCenter.section = modelData.s
+                    bar.state = showing ? "normal" : "control_center"
+                  }
+                }
+              }
             }
           }
 
@@ -1450,8 +1497,8 @@ Scope {
             horizontalItemAlignment: Grid.AlignHCenter
             verticalItemAlignment: Grid.AlignVCenter
             anchors {
-              right: metrics.isVertical ? undefined : screenCapture.left
-              bottom: metrics.isVertical ? screenCapture.top : undefined
+              right: metrics.isVertical ? undefined : quickParts.left
+              bottom: metrics.isVertical ? quickParts.top : undefined
               verticalCenter: metrics.isVertical ? undefined : parent.verticalCenter
               horizontalCenter: metrics.isVertical ? parent.horizontalCenter : undefined
               rightMargin: metrics.isVertical ? 0 : metrics.marginBar

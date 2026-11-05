@@ -30,6 +30,8 @@ Scope {
     { name: "settings", label: "Quick settings", icon: "󰒓" }
   ]
   property string tab: "notifications"
+  // Quick settings part shown alone when opened from a bar button ("" = whole panel).
+  property string section: ""
   readonly property int tabIndex: Math.max(0, classes.findIndex(c => c.name === tab))
   // Name or 1-based number -> class name ("" if unknown).
   function className(arg) {
@@ -82,7 +84,14 @@ Scope {
       if (svc.quietApps.indexOf(n.appName) >= 0)
         n.summaryChanged.connect(() => { if (svc.isChatter(n)) Qt.callLater(() => n.dismiss()) })
       if (!svc.lookingAtList) svc.unread++
+      // Soft ping on arrival; silent under do not disturb. One player at a time.
+      if (!svc.dnd && !pingProc.running) pingProc.running = true
     }
+  }
+
+  Process {
+    id: pingProc
+    command: ["pw-play", "--volume", "0.4", Quickshell.shellDir + "/assets/sounds/ping.wav"]
   }
 
   // True while some monitor shows the notifications class (set by the bars).

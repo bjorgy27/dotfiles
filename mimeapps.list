@@ -3,6 +3,9 @@ text/plain=org.gnome.TextEditor.desktop;kitty.desktop;
 video/mp4=firefox.desktop;
 application/vnd.openxmlformats-officedocument.presentationml.presentation=libreoffice-impress.desktop;firefox.desktop;
 application/vnd.openxmlformats-officedocument.wordprocessingml.document=firefox.desktop;
+x-scheme-handler/tg=userapp-Telegram Desktop-GQOCY3.desktop;
+x-scheme-handler/tonsite=userapp-Telegram Desktop-6OLEY3.desktop;
+x-scheme-handler/ton=userapp-Telegram Desktop-TSXEY3.desktop;
 
 [Default Applications]
 text/plain=org.gnome.TextEditor.desktop
@@ -19,3 +22,6 @@ image/avif=org.xfce.ristretto.desktop
 image/heif=org.xfce.ristretto.desktop
 image/x-icon=org.xfce.ristretto.desktop
 application/vnd.openxmlformats-officedocument.presentationml.presentation=libreoffice-impress.desktop
+x-scheme-handler/tg=userapp-Telegram Desktop-GQOCY3.desktop
+x-scheme-handler/tonsite=userapp-Telegram Desktop-6OLEY3.desktop
+x-scheme-handler/ton=userapp-Telegram Desktop-TSXEY3.desktop

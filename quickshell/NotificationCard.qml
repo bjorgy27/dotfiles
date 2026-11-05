@@ -72,10 +72,14 @@ Rectangle {
     Item {
       id: iconBox
       Layout.alignment: Qt.AlignTop
-      Layout.preferredWidth: metrics.s(36)
-      Layout.preferredHeight: metrics.s(36)
+      Layout.preferredWidth: metrics.s(fromQ ? 72 : 36)
+      Layout.preferredHeight: metrics.s(fromQ ? 72 : 36)
 
-      readonly property string imageSrc: card.n?.image ?? ""
+      // Q (voice assistant / OpenClaw, and Beck's Telegram chat with Q) always gets the lion portrait:
+      // q_voice sends -i audio-speakers, which this icon theme lacks, and that drew a missing texture.
+      readonly property bool fromQ: /^(q|openclaw)$/i.test(card.n?.appName ?? "")
+        || (/^telegram desktop$/i.test(card.n?.appName ?? "") && /^Q( |$)/.test(card.n?.summary ?? ""))
+      readonly property string imageSrc: fromQ ? Qt.resolvedUrl("assets/lion/clear/default.png") : (card.n?.image ?? "")
       readonly property string iconSrc: {
         let i = card.n?.appIcon ?? ""
         if (i === "" && card.n?.desktopEntry) i = DesktopEntries.byId(card.n.desktopEntry)?.icon ?? ""
