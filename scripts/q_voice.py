@@ -23,6 +23,7 @@ Commands:
   say "..."                    TTS only
   enroll [name] [--last N]     teach the shared speaker service a voice from the last N clips (no name = list)
   speaker-status               clips per device in each profile, and the last accept/refuse decisions
+  hub-pair CODE                pair with the Q Hub (Q_HUB_URL); writes Q_HUB_KEY_FILE 0600, prints the device id
 
 Who is talking: with Q_SPEAKER_URL set, every turn is matched against the enrolled profiles on q-speaker
 (the service can be shared with other clients, so enrolling once is enough for all of them). The model is told
@@ -110,6 +111,13 @@ GATEWAY_TOKEN = E("Q_GATEWAY_TOKEN", "")
 AGENT = E("Q_AGENT", "main")
 USER = E("Q_USER", f"{DEVICE}-voice")
 MODEL = E("Q_MODEL", "")                          # empty = the gateway's default model
+HUB_URL = E("Q_HUB_URL", "").rstrip("/")          # Q Hub relay; empty = talk to the gateway directly (unchanged)
+HUB_KEY_FILE = E("Q_HUB_KEY_FILE", os.path.join(HOME, ".config/q-hub/device-key"))  # {"device_id","secret"}, 0600
+HUB_ORIGIN = E("Q_HUB_ORIGIN", "")                # default: scheme://host[:port] of Q_HUB_URL
+try:
+    HUB_TIMEOUT_S = float(E("Q_HUB_TIMEOUT_S", "240"))
+except ValueError:
+    HUB_TIMEOUT_S = 240.0
 BRIEF = E("Q_BRIEF", "1") == "1"
 WHISPER_URL = E("Q_WHISPER_URL", "http://127.0.0.1:8178/inference")
 WHISPER_MODEL = E("Q_WHISPER_MODEL", f"{HOME}/.local/share/whisper/ggml-base.en.bin")
@@ -829,8 +837,190 @@ def _abort(r):
         pass
 
 
+# ---------------------------------------------------------------- Q Hub relay (Q_HUB_URL)
+# Signed per q-hub DESIGN.md section 4 / qhub-core auth.rs: key = SHA-256("qhub-key-v1" || secret bytes),
+# X-Q-Sig = hex HMAC-SHA256(key, "qhub-sig-v1\n" method \n target \n ts \n nonce \n sha256hex(body)).
+def hub_key(secret_hex):
+    import hashlib
+    return hashlib.sha256(b"qhub-key-v1" + bytes.fromhex(secret_hex)).digest()
+
+
+def hub_canonical(method, target, ts, nonce, body):
+    import hashlib
+    return f"qhub-sig-v1\n{method}\n{target}\n{ts}\n{nonce}\n{hashlib.sha256(body).hexdigest()}".encode()
+
+
+def hub_sign(key, method, target, ts, nonce, body):
+    import hashlib
+    import hmac
+    return hmac.new(key, hub_canonical(method, target, ts, nonce, body), hashlib.sha256).hexdigest()
+
+
+def hub_load_key(path=None):
+    """The device key file, only if it is a regular file owned by us with mode 0600."""
+    import stat
+    path = path or HUB_KEY_FILE
+    st = os.lstat(path)
+    if not stat.S_ISREG(st.st_mode):
+        raise RuntimeError("key file is not a regular file")
+    if stat.S_IMODE(st.st_mode) != 0o600 or st.st_uid != os.getuid():
+        raise RuntimeError(f"key file mode {stat.S_IMODE(st.st_mode):o}, want 600")
+    with open(path) as f:
+        k = json.load(f)
+    dev, secret = k.get("device_id", ""), k.get("secret", "")
+    if not re.fullmatch(r"[0-9a-f]{16}", dev) or not re.fullmatch(r"[0-9a-f]{64}", secret):
+        raise RuntimeError("key file malformed")
+    return dev, secret
+
+
+def _hub_parts(url=None):
+    from urllib.parse import urlsplit
+    u = urlsplit(url or HUB_URL)
+    if u.scheme not in ("http", "https") or not u.netloc or u.query or u.fragment or u.username or u.password:
+        raise RuntimeError("Q_HUB_URL must be http(s)://host[:port][/base] with no query or userinfo")
+    # plain http only to this machine: across the tailnet the key, the question and the reply go over Serve TLS
+    if u.scheme == "http" and (u.hostname or "") not in ("127.0.0.1", "::1", "localhost"):
+        raise RuntimeError("Q_HUB_URL must be https unless it points at loopback")
+    return u, HUB_ORIGIN or f"{u.scheme}://{u.netloc}"
+
+
+def _hub_zone():
+    z = E("TZ", "").lstrip(":")
+    if not z:
+        try:
+            z = os.path.realpath("/etc/localtime").split("/zoneinfo/", 1)[1]
+        except (OSError, IndexError):
+            z = ""
+    return z if z and len(z) <= 64 and re.fullmatch(r"[A-Za-z0-9/_+-]+", z) else None
+
+
+def hub_turn(text, speaker=None):
+    """One turn through the Q Hub. Returns the reply text (with its [lion:<mood>] tag); raises on anything but 200.
+    The hub builds its own prompt prefix, so only the plain text goes. `speaker` has no envelope field yet."""
+    import secrets
+    from datetime import datetime
+    u, origin = _hub_parts()
+    dev, secret = hub_load_key()
+    env = {"v": 1, "id": secrets.token_urlsafe(18),
+           "channel": "desk_voice" if VIA == "voice" else ("agent_pickup" if PICKUP else "panel"),
+           "modality": "voice" if VIA == "voice" else "text",
+           "reply": "spoken" if VIA == "voice" else ("shown" if QUIET else "both"),
+           "sent_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+           "session": "main", "text": text}
+    zone = _hub_zone()
+    if zone:
+        env["sent_zone"] = zone
+    body = json.dumps(env, ensure_ascii=False, separators=(",", ":")).encode()
+    target = u.path.rstrip("/") + "/api/v1/messages"
+    ts, nonce = int(time.time()), secrets.token_urlsafe(24)
+    headers = {"Origin": origin, "Content-Type": "application/json", "Accept": "application/json",
+               "X-Q-Device": dev, "X-Q-Ts": str(ts), "X-Q-Nonce": nonce,
+               "X-Q-Sig": hub_sign(hub_key(secret), "POST", target, ts, nonce, body)}
+    try:
+        r = SESSION.post(f"{u.scheme}://{u.netloc}{target}", headers=headers, data=body, timeout=(5, HUB_TIMEOUT_S),
+                         allow_redirects=False)
+    except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as e:
+        # a reset after the request was sent may mean the hub is already running the turn: no second run
+        if isinstance(e, requests.exceptions.ConnectTimeout) or "Connection refused" in str(e) or "Name or service" in str(e):
+            raise
+        raise HubTurnLive(f"hub connection lost mid-turn ({type(e).__name__})")
+    except requests.exceptions.ReadTimeout:
+        raise HubTurnLive("hub read timeout: Q may still be answering")
+    if r.status_code != 200:
+        try:
+            code = r.json().get("error", "")
+        except Exception:
+            code = ""
+        code = code if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,32}", code) else ""
+        msg = f"hub http {r.status_code}{' ' + code if code else ''}"
+        if r.status_code in (409, 504):
+            # a turn is running on the hub (busy, or Q is still answering): the question must not run a second
+            # time on the direct path, so this is a spoken error, never a fallback
+            raise HubTurnLive(msg)
+        if r.status_code in (400, 401, 403, 429) or 300 <= r.status_code < 400:
+            # the hub refused us (bad text, revoked or wrong key, locked out) or something redirected the signed
+            # request: a silent direct run would hide that, so it is a spoken error too
+            raise HubRefused(msg)
+        raise RuntimeError(msg)
+    try:
+        rep = r.json()["reply"]
+        out, mood = rep["text"], rep.get("mood")
+    except Exception:
+        raise HubTurnLive("hub answered 200 without a reply")
+    if not isinstance(out, str):
+        raise HubTurnLive("hub reply has no text")
+    # the hub filters replies already; the shim does not trust that blindly (RT2-07 in the other direction)
+    out = "\n".join(l for l in out.split("\n") if not re.match(r"^\s*MEDIA:", l))
+    out = re.sub(r"\[\[[^\]]*\]\]", "", out)
+    mood = mood if isinstance(mood, str) and mood in MOODS else None
+    return f"[lion:{mood}] {out}" if mood else out
+
+
+class HubTurnLive(RuntimeError):
+    """The hub answered 409 or 504 (or went away after the request was sent): a turn for this question may be
+    running there. Not a fallback case: the direct path would run it a second time."""
+
+
+class HubRefused(RuntimeError):
+    """The hub refused the device or the text (400/401/403/429) or redirected. Spoken as an error, never a silent
+    direct run that would hide a revocation."""
+
+
+def hub_pair(code, name=None, kind=None):
+    """POST /api/pair, write the key file 0600 atomically. Returns the device id (never the secret)."""
+    u, origin = _hub_parts()
+    body = json.dumps({"code": code, "name": name or DEVICE, "kind": kind or E("Q_HUB_KIND", "desktop")}).encode()
+    r = SESSION.post(f"{u.scheme}://{u.netloc}{u.path.rstrip('/')}/api/pair", data=body, timeout=(5, 30),
+                     headers={"Origin": origin, "Content-Type": "application/json", "Accept": "application/json"},
+                     allow_redirects=False)
+    if r.status_code != 200:
+        raise RuntimeError(f"pairing refused: hub http {r.status_code}")
+    j = r.json()
+    dev, secret = j["device_id"], j["secret"]
+    if not re.fullmatch(r"[0-9a-f]{16}", dev) or not re.fullmatch(r"[0-9a-f]{64}", secret):
+        raise RuntimeError("hub answered a malformed key")
+    d = os.path.dirname(HUB_KEY_FILE)
+    old = os.umask(0o077)
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        tmp = f"{HUB_KEY_FILE}.tmp.{os.getpid()}"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump({"device_id": dev, "secret": secret}, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, HUB_KEY_FILE)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.umask(old)
+    return dev
+
+
 def stream_llm(text, on_delta, stop, holder, speaker=None):
     """POST to the gateway with stream:true; call on_delta(str) per chunk. Returns full text."""
+    # Hub path only when the speaker needs no note: the envelope has no speaker field yet, so a guest or an unsure
+    # voice match keeps the direct path, where speaker_note() tells Q who is talking (review finding 1).
+    if HUB_URL and not speaker_note(speaker):
+        t0 = time.time()
+        try:
+            full = hub_turn(text, speaker)
+        except (HubTurnLive, HubRefused):
+            raise                               # a live turn or a refusal: never a second run on the direct path
+        except Exception as e:  # noqa: a hub that is down or unreachable falls back to the direct gateway path below
+            log(f"hub unreachable ({str(e)[:160]}), direct gateway")
+            dbg(f"hub failed after {time.time() - t0:.2f}s: {e}")
+        else:
+            dbg(f"hub round trip {time.time() - t0:.2f}s")
+            if stop.is_set():
+                return full
+            on_delta(full)
+            return full
     SPEAK = ("write everything as it should be spoken aloud: spell out units, abbreviations and symbols in full words "
              "(gigabytes not GB, percent not %, degrees Fahrenheit not F), and avoid file paths and code unless asked")
     # sound like a person, not a narrator, and with eleven_v3 direct the delivery with audio tags
@@ -1643,11 +1833,21 @@ def main():
     e.add_argument("--device", help="which mic the clips came from (default: Q_DEVICE)")
     st = sub.add_parser("speaker-status", help="voice profile per device and recent accept/refuse decisions")
     st.add_argument("-n", type=int, default=15)
+    hp = sub.add_parser("hub-pair", help="pair this machine with the Q Hub (Q_HUB_URL) using an 8-digit code")
+    hp.add_argument("code")
     args = ap.parse_args()
     if args.cmd == "enroll":
         return cmd_speakers(args)
     if args.cmd == "speaker-status":
         return cmd_speaker_status(args)
+    if args.cmd == "hub-pair":
+        if not HUB_URL:
+            sys.exit("Q_HUB_URL not set")
+        try:
+            print(hub_pair(args.code))
+        except Exception as e:
+            sys.exit(f"hub-pair failed: {e}")
+        return
     if not GATEWAY_URL or not GATEWAY_TOKEN:
         sys.exit("Q_GATEWAY_URL / Q_GATEWAY_TOKEN not set (see q_voice.env.example; q_voice.sh setup)")
     if args.cmd == "turn":
