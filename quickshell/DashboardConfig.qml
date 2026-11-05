@@ -36,8 +36,9 @@ Item {
   // screen — while a widget of that type is in the active preset; see below.
   readonly property var registry: ({
     "canvas":      { file: "CanvasWidget.qml" },
-    "systemstats": { file: "SystemStatsWidget.qml" },
-    "miscstats":   { file: "MiscStatsWidget.qml" },
+    // systemstats (SystemStatsWidget.qml) and miscstats (MiscStatsWidget.qml)
+    // were unregistered 2026-11-05 in favour of "tailscale"; files kept.
+    "tailscale":   { file: "TailscaleHealthWidget.qml" },
     "radar":       { file: "RadarWidget.qml" },
     "weather":     { file: "WeatherWidget.qml" },
     "network":     { file: "NetworkStatsWidget.qml" },
@@ -58,8 +59,7 @@ Item {
     name: "default", columns: 6, portraitColumns: 2, widthPercent: 60,
     widgets: [
       { type: "canvas",      col: 0, row: 0,   colSpan: 2, rowSpan: 3.8, options: {} },
-      { type: "systemstats", col: 0, row: 3.8, colSpan: 1, rowSpan: 1.6, options: {} },
-      { type: "miscstats",   col: 1, row: 3.8, colSpan: 1, rowSpan: 1.6, options: {} },
+      { type: "tailscale",   col: 0, row: 3.8, colSpan: 2, rowSpan: 1.6, options: {} },
       { type: "radar",       col: 2, row: 0,   colSpan: 4, rowSpan: 4.2, options: {} },
       { type: "weather",     col: 2, row: 4.2, colSpan: 2, rowSpan: 1.2, options: {} },
       { type: "network",     col: 4, row: 4.2, colSpan: 2, rowSpan: 1.2, options: {} }
@@ -68,8 +68,7 @@ Item {
       columns: 2,
       widgets: [
         { type: "canvas",      col: 0, row: 0,   colSpan: 2, rowSpan: 3.0, options: {} },
-        { type: "systemstats", col: 0, row: 3.0, colSpan: 1, rowSpan: 1.6, options: {} },
-        { type: "miscstats",   col: 1, row: 3.0, colSpan: 1, rowSpan: 1.6, options: {} },
+        { type: "tailscale",   col: 0, row: 3.0, colSpan: 2, rowSpan: 1.6, options: {} },
         { type: "radar",       col: 0, row: 4.6, colSpan: 2, rowSpan: 4.2, options: {} },
         { type: "weather",     col: 0, row: 8.8, colSpan: 1, rowSpan: 1.2, options: {} },
         { type: "network",     col: 1, row: 8.8, colSpan: 1, rowSpan: 1.2, options: {} }

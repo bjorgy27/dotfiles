@@ -16,8 +16,8 @@ edits show up live. Adapted from gagehauptman/dotfiles (`DashboardConfig.qml`).
     } } }
 ```
 
-- `type`: one of the registry keys in `DashboardConfig.qml`: canvas, systemstats,
-  miscstats, radar, weather, network, music. New widget = one registry line.
+- `type`: one of the registry keys in `DashboardConfig.qml`: canvas, tailscale,
+  radar, weather, network, music. New widget = one registry line.
 - `col`/`row` pin a widget; leave them out and it flows into the lowest free
   spot. Rows can be fractional. Row height is one dashboard widget height.
 - `presets.local.json` (gitignored) adds or replaces presets on one machine.
