@@ -894,9 +894,20 @@ def _hub_zone():
     return z if z and len(z) <= 64 and re.fullmatch(r"[A-Za-z0-9/_+-]+", z) else None
 
 
-def hub_turn(text, speaker=None):
+def _hub_clean(t):
+    # the hub filters replies already; the shim does not trust that blindly (RT2-07 in the other direction)
+    t = "\n".join(l for l in t.split("\n") if not re.match(r"^\s*MEDIA:", l))
+    return re.sub(r"\[\[[^\]]*\]\]", "", t)
+
+
+HUB_STREAM_CAP = 256 * 1024
+
+
+def hub_turn(text, speaker=None, on_delta=None, stop=None, holder=None):
     """One turn through the Q Hub. Returns the reply text (with its [lion:<mood>] tag); raises on anything but 200.
-    The hub builds its own prompt prefix, so only the plain text goes. `speaker` has no envelope field yet."""
+    The hub builds its own prompt prefix, so only the plain text goes. `speaker` has no envelope field yet.
+    With on_delta the hub streams (SSE): the mood tag and each delta go to on_delta as they arrive, and the return
+    value is everything already passed to on_delta. A JSON 200 (hub without streaming) is returned whole instead."""
     import secrets
     from datetime import datetime
     u, origin = _hub_parts()
@@ -913,12 +924,13 @@ def hub_turn(text, speaker=None):
     body = json.dumps(env, ensure_ascii=False, separators=(",", ":")).encode()
     target = u.path.rstrip("/") + "/api/v1/messages"
     ts, nonce = int(time.time()), secrets.token_urlsafe(24)
-    headers = {"Origin": origin, "Content-Type": "application/json", "Accept": "application/json",
+    headers = {"Origin": origin, "Content-Type": "application/json",
+               "Accept": "text/event-stream" if on_delta else "application/json",
                "X-Q-Device": dev, "X-Q-Ts": str(ts), "X-Q-Nonce": nonce,
                "X-Q-Sig": hub_sign(hub_key(secret), "POST", target, ts, nonce, body)}
     try:
         r = SESSION.post(f"{u.scheme}://{u.netloc}{target}", headers=headers, data=body, timeout=(5, HUB_TIMEOUT_S),
-                         allow_redirects=False)
+                         allow_redirects=False, stream=bool(on_delta))
     except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as e:
         # a reset after the request was sent may mean the hub is already running the turn: no second run
         if isinstance(e, requests.exceptions.ConnectTimeout) or "Connection refused" in str(e) or "Name or service" in str(e):
@@ -942,18 +954,105 @@ def hub_turn(text, speaker=None):
             # request: a silent direct run would hide that, so it is a spoken error too
             raise HubRefused(msg)
         raise RuntimeError(msg)
+    if on_delta and r.headers.get("Content-Type", "").split(";")[0].strip().lower() == "text/event-stream":
+        return _hub_stream(r, on_delta, stop, holder)
     try:
         rep = r.json()["reply"]
+    except requests.exceptions.RequestException:
+        raise HubTurnLive("hub connection lost mid-turn")
+    except Exception:
+        raise HubTurnLive("hub answered 200 without a reply")
+    full = _hub_final(rep)
+    if on_delta and not (stop is not None and stop.is_set()):
+        on_delta(full)                          # a hub without streaming: the whole reply as one delta
+    return full
+
+
+def _hub_final(rep):
+    try:
         out, mood = rep["text"], rep.get("mood")
     except Exception:
         raise HubTurnLive("hub answered 200 without a reply")
     if not isinstance(out, str):
         raise HubTurnLive("hub reply has no text")
-    # the hub filters replies already; the shim does not trust that blindly (RT2-07 in the other direction)
-    out = "\n".join(l for l in out.split("\n") if not re.match(r"^\s*MEDIA:", l))
-    out = re.sub(r"\[\[[^\]]*\]\]", "", out)
+    out = _hub_clean(out)
     mood = mood if isinstance(mood, str) and mood in MOODS else None
     return f"[lion:{mood}] {out}" if mood else out
+
+
+def _hub_stream(r, on_delta, stop, holder):
+    """Read the hub's SSE turn: {seq,id}, optional {mood}, {delta}..., then {reply} or {error}, then [DONE]."""
+    if holder is not None:
+        holder["resp"] = r                      # lets a barge-in _abort() wake the blocked read
+    spoken, size, mooded, buf = [], 0, False, b""
+
+    def say(t):
+        nonlocal size
+        if size >= HUB_STREAM_CAP:
+            return
+        t = t[:HUB_STREAM_CAP - size]
+        size += len(t.encode())
+        spoken.append(t)
+        on_delta(t)
+
+    def done(why):
+        if spoken:
+            if why:
+                log(f"hub stream ended without a reply ({why}), kept what was spoken")
+            return "".join(spoken)
+        raise HubTurnLive(f"hub stream ended without a reply ({why or 'no text'})")
+
+    try:
+        while not (stop is not None and stop.is_set()):
+            try:
+                chunk = _read1(r.raw)
+            except Exception as e:  # noqa: read timeout or reset mid-stream: the turn was sent, never rerun it
+                return done(type(e).__name__)
+            if not chunk:
+                return done("eof")
+            buf += chunk
+            if len(buf) > 2 * HUB_STREAM_CAP:   # one absurd line with no newline: stop reading it
+                return done("oversized event")
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                line = line.strip()
+                if not line.startswith(b"data:"):
+                    continue
+                data = line[5:].strip()
+                if data == b"[DONE]":
+                    return done("done before reply")
+                try:
+                    obj = json.loads(data)
+                except Exception:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                if "error" in obj:
+                    code = obj["error"]
+                    code = code if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,32}", code) else "error"
+                    if spoken:
+                        log(f"hub stream error {code} after speech")
+                    raise HubTurnLive(f"hub stream {code}")   # the turn was sent: never a second run
+                m = obj.get("mood")
+                if isinstance(m, str) and m in MOODS and not mooded and not spoken:
+                    mooded = True
+                    say(f"[lion:{m}] ")
+                d = obj.get("delta")
+                if isinstance(d, str) and d:
+                    d = _hub_clean(d)
+                    if d:
+                        say(d)
+                if "reply" in obj:
+                    if size > (len(spoken[0].encode()) if mooded else 0):
+                        return "".join(spoken)  # deltas came: they are the reply
+                    full = _hub_final(obj["reply"] if isinstance(obj["reply"], dict) else {})
+                    if mooded:                  # mood already went out: send only the text
+                        full = re.sub(r"^\[lion:[a-z]+\]\s*", "", full)
+                    say(full)
+                    return "".join(spoken)
+        return "".join(spoken)                  # barge-in: stop was set
+    finally:
+        r.close()
 
 
 class HubTurnLive(RuntimeError):
@@ -1009,7 +1108,7 @@ def stream_llm(text, on_delta, stop, holder, speaker=None):
     if HUB_URL and not speaker_note(speaker):
         t0 = time.time()
         try:
-            full = hub_turn(text, speaker)
+            full = hub_turn(text, speaker, on_delta=on_delta, stop=stop, holder=holder)
         except (HubTurnLive, HubRefused):
             raise                               # a live turn or a refusal: never a second run on the direct path
         except Exception as e:  # noqa: a hub that is down or unreachable falls back to the direct gateway path below
@@ -1017,10 +1116,7 @@ def stream_llm(text, on_delta, stop, holder, speaker=None):
             dbg(f"hub failed after {time.time() - t0:.2f}s: {e}")
         else:
             dbg(f"hub round trip {time.time() - t0:.2f}s")
-            if stop.is_set():
-                return full
-            on_delta(full)
-            return full
+            return full                         # hub_turn already passed every piece to on_delta
     SPEAK = ("write everything as it should be spoken aloud: spell out units, abbreviations and symbols in full words "
              "(gigabytes not GB, percent not %, degrees Fahrenheit not F), and avoid file paths and code unless asked")
     # sound like a person, not a narrator, and with eleven_v3 direct the delivery with audio tags
